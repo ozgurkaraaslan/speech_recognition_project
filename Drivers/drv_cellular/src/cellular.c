@@ -25,13 +25,11 @@ atCommandErrorCodes_t Cellular_InitDevice(void) {
 }
 
 atCommandErrorCodes_t Cellular_SetupNetwork(void) {
-    // Configure APN for EG25-G
+    // Configure APN
     char apn_cmd[64];
-    sprintf(apn_cmd, "AT+QICSGP=1,1,\"%s\",\"\",\"\",1", CELL_APN);
-    SendCommand(apn_cmd, "OK", 2000);
+    sprintf(apn_cmd, "AT+CGDCONT=1,\"IPV4V6\",\"%s\"", CELL_APN);
 
-    // Activate PDP Context
-    return SendCommand("AT+QIACT=1", "OK", 10000);
+    return SendCommand(apn_cmd, "OK", 2000);
 }
 
 atCommandErrorCodes_t Cellular_ConnectBroker(void) {

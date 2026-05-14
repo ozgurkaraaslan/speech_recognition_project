@@ -732,25 +732,22 @@ void StartDefaultTask(void *argument)
   MX_USB_HOST_Init();
   /* USER CODE BEGIN 5 */
 
-  /*
-  // 1. Open the UART driver (Enables interrupts)
+  // 1. Open the UART driver
   AtCommand_Open(NULL);
 
   // 2. Try to initialize the EG25-G
-  // -> BREAKPOINT HERE: Step into this function
   atCommandErrorCodes_t res = Cellular_InitDevice();
 
   if (res == E_AT_ERR_NONE) {
-	  // Modem responded with OK
-	  // Now try to setup the network
+	  // Try to setup the network
 	  res = Cellular_SetupNetwork();
   }
 
   for(;;)
   {
-	  osDelay(10);
+	  osDelay(1000);
   }
-  */
+
   /* USER CODE END 5 */
 }
 

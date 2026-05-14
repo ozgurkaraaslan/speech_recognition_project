@@ -4,7 +4,7 @@
 #include "at_command.h"
 
 /* Connection Configurations */
-#define CELL_APN            "internet"
+#define CELL_APN            "super"
 #define CELL_BROKER_IP      "your.broker.ip"
 #define CELL_BROKER_PORT    1883
 
