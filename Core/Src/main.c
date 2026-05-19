@@ -68,6 +68,8 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+extern UART_HandleTypeDef huart3; 
+UART_HandleTypeDef UartHandle;
 char latest_signal_strength[64] = "Unknown";
 char latest_network_time[64] = "Unknown";
 
@@ -173,7 +175,8 @@ int main(void)
   osKernelInitialize();
 
   /* USER CODE BEGIN RTOS_MUTEX */
-  /* add mutexes, ... */
+  at_driver_mutexHandle = osMutexNew(&at_driver_mutex_attributes);
+
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -193,7 +196,12 @@ int main(void)
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  // Create threads for signal quality and time retrieval
+  signalTaskHandle = osThreadNew(StartSignalTask, NULL, &signalTask_attributes);
+  timeTaskHandle = osThreadNew(StartTimeTask, NULL, &timeTask_attributes);
+
+  // Create thread for microphone data processing
+  micTaskHandle = osThreadNew(StartMicTask, NULL, &micTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
