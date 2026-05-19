@@ -1,0 +1,16 @@
+{
+  "toolchain": "STM32CubeIDE",
+  "variant": "ApplicationTemplate",
+  "fromMx": true,
+  "isGenerated": true,
+  "name": "driver_development",
+  "createdAt": 1779193002135,
+  "lastModified": 1779193805134,
+  "lastAccessed": 1779193805134,
+  "type": "MxProject",
+  "mcu": "STM32F407VGT6",
+  "board": "STM32F407G-DISC1",
+  "ioc": "",
+  "generator": "STM32CubeMX1",
+  "lastGenerationRunId": "run-1"
+}

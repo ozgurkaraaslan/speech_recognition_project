@@ -1,0 +1,219 @@
+ST Edge AI Core v4.0.0-20500 359356bb0
+Created date          : 2026-05-19 15:30:10
+Parameters            : generate --model C:\Users\ayseb\Downloads\model_no_quant.tflite --batch-size 10 --mode host --optimization balanced --name network --verbosity 1 --c-api st-ai --workspace C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\st_ai_ws --output C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\st_ai_output --memory-pool C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\mempools.json --target stm32f4
+
+Exec/report summary (generate)
+---------------------------------------------------------------------------------------------------------------------------
+model file         :   C:\Users\ayseb\Downloads\model_no_quant.tflite                                                      
+type               :   tflite                                                                                              
+c_name             :   network                                                                                             
+compression        :   lossless                                                                                            
+options            :   allocate-inputs, allocate-outputs, multi-heaps, use-lite-runtime, use-st-ai                         
+optimization       :   balanced                                                                                            
+target/series      :   stm32f4                                                                                             
+memory pool        :   C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\mempools.json   
+workspace dir      :   C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\st_ai_ws        
+output dir         :   C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\st_ai_output    
+model_fmt          :   float                                                                                               
+model_name         :   model_no_quant                                                                                      
+model_hash         :   0x0f43b6c3927e1e45d232d9425acbf0f8                                                                  
+params #           :   9,867 items (38.54 KiB)                                                                             
+---------------------------------------------------------------------------------------------------------------------------
+input 1/1          :   'serving_default_keras_tensor0', f32(1x122x40x1), 19.06 KBytes, activations                         
+output 1/1         :   'nl_6', f32(1x3), 12 Bytes, activations                                                             
+macc               :   102,560                                                                                             
+weights (ro)       :   39,468 B (38.54 KiB) (1 segment)                                                                    
+activations (rw)   :   23,616 B (23.06 KiB) (1 segment) *                                                                  
+ram (total)        :   23,616 B (23.06 KiB) = 23,616 + 0 + 0                                                               
+---------------------------------------------------------------------------------------------------------------------------
+(*) 'input'/'output' buffers are allocated in the activations buffer
+ 
+ Memory-pools summary (activations/ domain)
+ --------------- -------- ------------------------ --------- 
+ name            id       used                     buffer#   
+ --------------- -------- ------------------------ --------- 
+ RAM             0        23.06 KiB (20.6%)        10        
+ RAM2            unused   -                        0         
+ CCMRAM          unused   -                        0         
+ weights_array   3        38.54 KiB (3946800.0%)   6         
+ --------------- -------- ------------------------ --------- 
+ Warning: ['RAM2', 'CCMRAM'] memory pool s not used
+
+Model name - model_no_quant
+------ ----------------------------------------- ---------------------- -------------- -------- ------------------------------- --- --------------- ----------------- ----------------------------- 
+m_id   layer (type,original)                     oshape                 param/size         macc                    connected to   | c_size          c_macc            c_type                        
+------ ----------------------------------------- ---------------------- -------------- -------- ------------------------------- --- --------------- ----------------- ----------------------------- 
+0      serving_default_keras_tensor0 (Input, )   [b:1,h:122,w:40,c:1]                                                             |                 +4,096(+100.0%)   Resize_[0]                    
+       resize_0 (Resize, RESIZE_BILINEAR)        [b:1,h:32,w:32,c:1]                      4,096   serving_default_keras_tensor0   |                 -4,096(-100.0%)   
+------ ----------------------------------------- ---------------------- -------------- -------- ------------------------------- --- --------------- ----------------- ----------------------------- 
+1      conv2d_1 (Conv2D, CONV_2D)                [b:1,h:13,w:13,c:8]    520/2,080        86,536                        resize_0   |                 +1,352(+1.6%)     Conv2D_/Nonlinearity_[1, 2]   
+       nl_1_nl (Nonlinearity, CONV_2D)           [b:1,h:13,w:13,c:8]                      1,352                        conv2d_1   |                 -1,352(-100.0%)   
+------ ----------------------------------------- ---------------------- -------------- -------- ------------------------------- --- --------------- ----------------- ----------------------------- 
+2      pool_2 (Pool, MAX_POOL_2D)                [b:1,h:6,w:6,c:8]                        1,152                         nl_1_nl   |                                   Pool_[3]                      
+------ ----------------------------------------- ---------------------- -------------- -------- ------------------------------- --- --------------- ----------------- ----------------------------- 
+3      reshape_3 (Reshape, RESHAPE)              [b:1,c:288]                                                             pool_2   |                                   
+------ ----------------------------------------- ---------------------- -------------- -------- ------------------------------- --- --------------- ----------------- ----------------------------- 
+4      arith_constant3 (Placeholder, )           [b:32,c:288]           9,216/36,864                                              | +128(+0.3%)     +9,280(+100.0%)   Dense_/Nonlinearity_[4, 5]    
+       arith_constant4 (Placeholder, )           [b:32]                 32/128                                                    | -128(-100.0%)                     
+       gemm_4 (Gemm, FULLY_CONNECTED)            [b:1,c:32]                               9,248                       reshape_3   |                 -9,248(-100.0%)   
+                                                                                                                arith_constant3   | 
+                                                                                                                arith_constant4   | 
+       nl_4_nl (Nonlinearity, FULLY_CONNECTED)   [b:1,c:32]                                  32                          gemm_4   |                 -32(-100.0%)      
+------ ----------------------------------------- ---------------------- -------------- -------- ------------------------------- --- --------------- ----------------- ----------------------------- 
+5      arith_constant2 (Placeholder, )           [b:3,c:32]             96/384                                                    | +12(+3.1%)      +99(+100.0%)      Dense_[6]                     
+       arith_constant5 (Placeholder, )           [b:3]                  3/12                                                      | -12(-100.0%)                      
+       gemm_5 (Gemm, FULLY_CONNECTED)            [b:1,c:3]                                   99                         nl_4_nl   |                 -99(-100.0%)      
+                                                                                                                arith_constant2   | 
+                                                                                                                arith_constant5   | 
+------ ----------------------------------------- ---------------------- -------------- -------- ------------------------------- --- --------------- ----------------- ----------------------------- 
+6      nl_6 (Nonlinearity, SOFTMAX)              [b:1,c:3]                                   45                          gemm_5   |                                   Nonlinearity_[o][7]           
+------ ----------------------------------------- ---------------------- -------------- -------- ------------------------------- --- --------------- ----------------- ----------------------------- 
+model/c-model: macc=102,560/102,560  weights=39,468/39,468  activations=--/23,616 io=--/0
+
+
+
+Generated C-graph summary
+------------------------------------------------------------------------------------------------------------------------
+model name            : model_no_quant
+c-name                : network
+c-node #              : 8
+c-array #             : 16
+activations size      : 23616 (1 segment)
+weights size          : 39468 (1 segment)
+macc                  : 102560
+inputs                : ['serving_default_keras_tensor0_output']
+outputs               : ['nl_6_output']
+
+C-Arrays (16)
+------ -------------------------------------- ------------ ----------------- ------------- --------- 
+c_id   name (*_array)                         item/size    domain/mem-pool   c-type        comment   
+------ -------------------------------------- ------------ ----------------- ------------- --------- 
+0      conv2d_1_bias                          8/32         weights/weights   const float             
+1      conv2d_1_output                        1352/5408    activations/RAM   float                   
+2      conv2d_1_scratch0                      64/256       activations/RAM   float                   
+3      conv2d_1_weights                       512/2048     weights/weights   const float             
+4      gemm_4_bias                            32/128       weights/weights   const float             
+5      gemm_4_output                          32/128       activations/RAM   float                   
+6      gemm_4_weights                         9216/36864   weights/weights   const float             
+7      gemm_5_bias                            3/12         weights/weights   const float             
+8      gemm_5_output                          3/12         activations/RAM   float                   
+9      gemm_5_weights                         96/384       weights/weights   const float             
+10     nl_1_nl_output                         1352/5408    activations/RAM   float                   
+11     nl_4_nl_output                         32/128       activations/RAM   float                   
+12     nl_6_output                            3/12         activations/RAM   float         /output   
+13     pool_2_output                          288/1152     activations/RAM   float                   
+14     resize_0_output                        1024/4096    activations/RAM   float                   
+15     serving_default_keras_tensor0_output   4880/19520   activations/RAM   float         /input    
+------ -------------------------------------- ------------ ----------------- ------------- --------- 
+
+C-Layers (8)
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+c_id   name (*_layer)   id   layer_type      macc    rom     tensors                                   shape (array id)       
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+0      resize_0         0    Resize          4096    0       I: serving_default_keras_tensor0_output   f32(1x122x40x1) (15)   
+                                                             O: resize_0_output                        f32(1x32x32x1) (14)    
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+1      conv2d_1         1    Conv2D          86536   2080    I: resize_0_output                        f32(1x32x32x1) (14)    
+                                                             S: conv2d_1_scratch0                                             
+                                                             W: conv2d_1_weights                       f32(8x8x8x1) (3)       
+                                                             W: conv2d_1_bias                          f32(8) (0)             
+                                                             O: conv2d_1_output                        f32(1x13x13x8) (1)     
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+2      nl_1_nl          1    Nonlinearity    1352    0       I: conv2d_1_output                        f32(1x13x13x8) (1)     
+                                                             O: nl_1_nl_output                         f32(1x13x13x8) (10)    
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+3      pool_2           2    Pool            1152    0       I: nl_1_nl_output                         f32(1x13x13x8) (10)    
+                                                             O: pool_2_output                          f32(1x6x6x8) (13)      
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+4      gemm_4           4    Dense           9248    36992   I: pool_2_output                          f32(1x6x6x8) (13)      
+                                                             W: gemm_4_weights                         f32(32x288) (6)        
+                                                             W: gemm_4_bias                            f32(32) (4)            
+                                                             O: gemm_4_output                          f32(1x32) (5)          
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+5      nl_4_nl          4    Nonlinearity    32      0       I: gemm_4_output                          f32(1x32) (5)          
+                                                             O: nl_4_nl_output                         f32(1x32) (11)         
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+6      gemm_5           5    Dense           99      396     I: nl_4_nl_output                         f32(1x32) (11)         
+                                                             W: gemm_5_weights                         f32(3x32) (9)          
+                                                             W: gemm_5_bias                            f32(3) (7)             
+                                                             O: gemm_5_output                          f32(1x3) (8)           
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+7      nl_6             6    Nonlinearity    45      0       I: gemm_5_output                          f32(1x3) (8)           
+                                                             O: nl_6_output                            f32(1x3) (12)          
+------ ---------------- ---- --------------- ------- ------- ----------------------------------------- ---------------------- 
+
+
+
+Number of operations per c-layer
+------- ------ ------------------------- --------- -------------- 
+c_id    m_id   name (type)                     #op           type 
+------- ------ ------------------------- --------- -------------- 
+0       0      resize_0 (Resize)             4,096   smul_f32_f32 
+1       1      conv2d_1 (Conv2D)            86,536   smul_f32_f32 
+2       1      nl_1_nl (Nonlinearity)        1,352     op_f32_f32 
+3       2      pool_2 (Pool_Max)             1,152   smul_f32_f32 
+4       4      gemm_4 (Dense)                9,248   smul_f32_f32 
+5       4      nl_4_nl (Nonlinearity)           32     op_f32_f32 
+6       5      gemm_5 (Dense)                   99   smul_f32_f32 
+7       6      nl_6 (Nonlinearity)              45     op_f32_f32 
+------- ------ ------------------------- --------- -------------- 
+total                                      102,560 
+
+Number of operation types
+---------------- --------- ----------- 
+operation type           #           % 
+---------------- --------- ----------- 
+smul_f32_f32       101,131       98.6% 
+op_f32_f32           1,429        1.4% 
+
+Complexity report (model)
+------ ------------------------------- ------------------------- ------------------------- -------- 
+m_id   name                            c_macc                    c_rom                     c_id     
+------ ------------------------------- ------------------------- ------------------------- -------- 
+0      serving_default_keras_tensor0   |                  4.0%   |                  0.0%   [0]      
+1      conv2d_1                        ||||||||||||||||  85.7%   |                  5.3%   [1, 2]   
+2      pool_2                          |                  1.1%   |                  0.0%   [3]      
+4      arith_constant3                 ||                 9.0%   ||||||||||||||||  93.7%   [4, 5]   
+5      arith_constant2                 |                  0.1%   |                  1.0%   [6]      
+6      nl_6                            |                  0.0%   |                  0.0%   [7]      
+------ ------------------------------- ------------------------- ------------------------- -------- 
+macc=102,560 weights=39,468 act=23,616 ram_io=0
+ 
+ Requested memory size by section - "stm32f4" target
+ ------------------------------ ------- -------- ------ -------- 
+ module                            text   rodata   data      bss 
+ ------------------------------ ------- -------- ------ -------- 
+ NetworkRuntime1200_CM4_GCC.a     6,656        0      0        0 
+ network.o                        1,434       96    512       32 
+ lib (toolchain)*                   712       24      0        0 
+ ------------------------------ ------- -------- ------ -------- 
+ RT total**                       8,802      120    512       32 
+ ------------------------------ ------- -------- ------ -------- 
+ weights                              0   39,472      0        0 
+ activations                          0        0      0   23,616 
+ states                               0        0      0        0 
+ io                                   0        0      0        0 
+ ------------------------------ ------- -------- ------ -------- 
+ TOTAL                            8,802   39,592    512   23,648 
+ ------------------------------ ------- -------- ------ -------- 
+ *  toolchain objects (libm/libgcc*)
+ ** RT AI runtime objects (kernels+infrastructure)
+  
+  Summary - "stm32f4" target
+  --------------------------------------------------
+               FLASH (ro)      %*   RAM (rw)      % 
+  --------------------------------------------------
+  RT total          9,434   19.3%        544   2.3% 
+  --------------------------------------------------
+  TOTAL            48,906             24,160        
+  --------------------------------------------------
+  *  rt/total
+
+
+Generated files (5)
+-------------------------------------------------------------------------------------------------------------------- 
+C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\st_ai_output\network_data.h      
+C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\st_ai_output\network_data.c      
+C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\st_ai_output\network.h           
+C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\st_ai_output\network.c           
+C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\.ai\st_ai_output\network_details.h   
