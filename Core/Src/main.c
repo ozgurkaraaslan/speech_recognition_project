@@ -29,6 +29,7 @@
 #include "microphone.h"
 #include "at_command.h"
 #include "cellular.h"
+#include "mqtt.h"
 #include "app_x-cube-ai.h"
 /* USER CODE END Includes */
 
@@ -64,7 +65,7 @@ UART_HandleTypeDef huart3;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
@@ -79,19 +80,12 @@ const osMutexAttr_t at_driver_mutex_attributes = {
 };
 
 // Handle definitions for other tasks
-osThreadId_t signalTaskHandle;
-osThreadId_t timeTaskHandle;
+osThreadId_t networkTaskHandle;
 
-const osThreadAttr_t signalTask_attributes = {
-  .name = "SignalTask",
-  .stack_size = 256 * 4,
+const osThreadAttr_t networkTask_attributes = {
+  .name = "networkTask",
+  .stack_size = 1024 * 4, // Sınırları aşmamak için büyük stack
   .priority = (osPriority_t) osPriorityNormal,
-};
-
-const osThreadAttr_t timeTask_attributes = {
-  .name = "TimeTask",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 
 osThreadId_t micTaskHandle;
@@ -115,10 +109,10 @@ static void MX_I2S2_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-
-void StartSignalTask(void *argument);
-void StartTimeTask(void *argument);
 void StartMicTask(void *argument);
+void StartNetworkTask(void *argument); // YENİ EKLENDİ
+//void StartSignalTask(void *argument);
+//void StartTimeTask(void *argument);
 
 /* USER CODE END PFP */
 
@@ -196,10 +190,7 @@ int main(void)
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  // Create threads for signal quality and time retrieval
-  signalTaskHandle = osThreadNew(StartSignalTask, NULL, &signalTask_attributes);
-  timeTaskHandle = osThreadNew(StartTimeTask, NULL, &timeTask_attributes);
-
+  networkTaskHandle = osThreadNew(StartNetworkTask, NULL, &networkTask_attributes);
   // Create thread for microphone data processing
   micTaskHandle = osThreadNew(StartMicTask, NULL, &micTask_attributes);
   /* USER CODE END RTOS_THREADS */
@@ -584,6 +575,43 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void StartNetworkTask(void *argument)
+{
+    // 1. MODEMİ BAŞLAT
+    if (Cellular_CheckDevice() == E_AT_ERR_NONE)
+    {
+        // 2. ŞEBEKEYE VE İNTERNETE BAĞLAN
+        if (Cellular_SetupNetwork() == E_AT_ERR_NONE)
+        {
+            // 3. MQTT BAĞLANTISINI KUR (HiveMQ Public Test Sunucusu)
+            // Port: 1883 (Şifresiz TCP)
+            if (MQTT_OpenBroker("broker.hivemq.com", 1883) == E_AT_ERR_NONE)
+            {
+                // İsim çakışmaması için cihaza özel bir Client ID veriyoruz
+                if (MQTT_ConnectClient("Alpon_Test_Device_01", NULL, NULL) == E_AT_ERR_NONE)
+                {
+                    // 4. İLK TEST MESAJINI YAYINLA
+                    MQTT_Publish("alpon/test/status", "MQTT Baglantisi Basarili! Cihaz Online.");
+
+                    // 5. ANA İŞ DÖNGÜSÜ
+                    for(;;)
+                    {
+                        // Şimdilik cihazın hayatta olduğunu belli eden periyodik bir ping/mesaj
+                        MQTT_Publish("alpon/test/status", "Cihaz calismaya devam ediyor...");
+                        osDelay(10000);
+                    }
+                }
+            }
+        }
+    }
+
+    // Eğer işlemlerden biri başarısız olursa task'ı sistemi yormaması için uykuya al
+    for(;;)
+    {
+        osDelay(1000);
+    }
+}
+
 void StartMicTask(void *argument)
 {
     int16_t pcm_data[16];
@@ -603,7 +631,7 @@ void StartMicTask(void *argument)
             uint32_t avg_amplitude = total_amplitude / 16;
 
             // Threshold check
-            if (avg_amplitude > 1800) {
+            if (avg_amplitude > 2000) {
                 HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);   // Green LED HIGH
             } else {
                 HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET); // Green LED LOW
@@ -612,66 +640,6 @@ void StartMicTask(void *argument)
 			// If the semaphore times out (microphone freezes), to prevent locking up the processor:
 			osDelay(1);
 		}
-    }
-}
-
-// Task 1: Measure Signal Quality (CSQ)
-void StartSignalTask(void *argument)
-{
-    char resp_buf[64];
-    AtCommandReq_t req = {
-        .command = "AT+CSQ",
-        .expected_resp = "OK",
-        .timeout_ms = 1000,
-        .resp_buffer = resp_buf,
-        .resp_buffer_len = sizeof(resp_buf)
-    };
-
-    for(;;)
-    {
-        // Take the mutex before accessing the driver
-        if (osMutexAcquire(at_driver_mutexHandle, osWaitForever) == osOK)
-        {
-            if(AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req) == E_AT_ERR_NONE) {
-                if(req.line_count > 0) {
-                	snprintf(latest_signal_strength, sizeof(latest_signal_strength), "%s", req.lines[0]);
-                }
-            }
-            // Release the mutex after done
-            osMutexRelease(at_driver_mutexHandle);
-        }
-
-        osDelay(5000);
-    }
-}
-
-// Task 2: Get Current Time from Modem (CCLK)
-void StartTimeTask(void *argument)
-{
-    char resp_buf[64];
-    AtCommandReq_t req = {
-        .command = "AT+CCLK?",
-        .expected_resp = "OK",
-        .timeout_ms = 1000,
-        .resp_buffer = resp_buf,
-        .resp_buffer_len = sizeof(resp_buf)
-    };
-
-    for(;;)
-    {
-        // Take the mutex before accessing the driver
-        if (osMutexAcquire(at_driver_mutexHandle, osWaitForever) == osOK)
-        {
-            if(AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req) == E_AT_ERR_NONE) {
-                 if(req.line_count > 0) {
-                	 snprintf(latest_network_time, sizeof(latest_network_time), "%s", req.lines[0]);
-                }
-            }
-            // Release the mutex after done
-            osMutexRelease(at_driver_mutexHandle);
-        }
-
-        osDelay(3000);
     }
 }
 
@@ -688,11 +656,14 @@ void StartDefaultTask(void *argument)
 {
   /* init code for USB_HOST */
   MX_USB_HOST_Init();
+
   /* USER CODE BEGIN 5 */
+
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    // Default task işini bitirdi, sistemi yormaması için derin uykuya alıyoruz
+    osDelay(2000);
   }
   /* USER CODE END 5 */
 }

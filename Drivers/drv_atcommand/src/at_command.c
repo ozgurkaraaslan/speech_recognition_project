@@ -83,6 +83,18 @@ static atCommandErrorCodes_t ExecuteCommand(AtCommandReq_t* req)
     return result;
 }
 
+static atCommandErrorCodes_t SendRawData(AtCommandRawReq_t* req)
+{
+    if (req == NULL || req->data == NULL) return E_AT_ERR_HW_ERROR;
+
+    // Sadece veriyi yolla, sonuna hiçbir şey ekleme
+    if (HAL_UART_Transmit(&AT_HW_USART, req->data, req->length, req->timeout_ms) == HAL_OK) {
+        return E_AT_ERR_NONE;
+    }
+
+    return E_AT_ERR_HW_ERROR;
+}
+
 // Handle IOCTL commands from the application
 atCommandErrorCodes_t AtCommand_Ioctl(AT_COMMAND_IOCTL_COMMANDS_T eCommand, void* vpParam)
 {
@@ -91,7 +103,8 @@ atCommandErrorCodes_t AtCommand_Ioctl(AT_COMMAND_IOCTL_COMMANDS_T eCommand, void
     switch (eCommand) {
         case E_AT_IOCTL_SEND_CMD:
             return ExecuteCommand((AtCommandReq_t*)vpParam);
-
+        case E_AT_IOCTL_SEND_RAW:
+			return SendRawData((AtCommandRawReq_t*)vpParam);
         default:
             return E_AT_ERR_WRONG_IOCTL_CMD;
     }

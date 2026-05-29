@@ -1,5 +1,5 @@
-#ifndef INC_CELLULAR_DRIVER_H_
-#define INC_CELLULAR_DRIVER_H_
+#ifndef INC_CELLULAR_MW_H_
+#define INC_CELLULAR_MW_H_
 
 #include "at_command.h"
 
@@ -17,7 +17,7 @@ typedef enum {
 } CellState_t;
 
 /* Exported Functions */
-atCommandErrorCodes_t Cellular_InitDevice(void);
+atCommandErrorCodes_t Cellular_CheckDevice(void);
 atCommandErrorCodes_t Cellular_SetupNetwork(void);
 atCommandErrorCodes_t Cellular_ConnectBroker(void);
 atCommandErrorCodes_t Cellular_TransmitRaw(uint8_t* data, uint16_t len);
