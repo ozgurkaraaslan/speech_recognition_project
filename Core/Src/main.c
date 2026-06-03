@@ -133,6 +133,8 @@ const osThreadAttr_t micTask_attributes = {
   .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal, // Ses kaçırmamak için yüksek öncelik
 };
+
+osSemaphoreId_t rx_semaphore;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -221,7 +223,7 @@ int main(void)
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
-  /* add semaphores, ... */
+  rx_semaphore = osSemaphoreNew(1, 0, NULL);
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -690,7 +692,7 @@ void Process_Audio_To_MelSpectrogram(int16_t* pcm_input, float* log_mel_output)
 
     int hop_length = 128;
     int frame_length = 512;
-    int total_columns = (16000 - frame_length) / hop_length; // ~122 sütun
+    int total_columns = ((16000 - frame_length) / hop_length) + 1;
 
     for (int col = 0; col < total_columns; col++)
     {
@@ -760,14 +762,15 @@ void StartMicTask(void *argument)
         uint32_t segment_index = 0;
 
         while (segment_index < num_segments) {
-            // Adamın kütüphanesi 16 adet PCM verisi hazır olana kadar bekler
-            while(!microphone_record_sample()) {
-                osDelay(1); // RTOS'u kitlememek için küçük bir bekleme
+            // 1ms bekleme yerine, kesmenin dürtmesini bekle (Anında uyanır)
+            if (osSemaphoreAcquire(rx_semaphore, 10) == osOK) {
+                if(microphone_record_sample()) {
+                    memcpy(&pcm_audio_buffer[segment_index * 16], pcm_buffer_int16, sizeof(int16_t) * 16);
+                    segment_index++;
+                }
+            } else {
+                // Mikrofon veya DMA çöktü, yeniden başlatma stratejisi eklenebilir.
             }
-
-            // Çıkan 16 veriyi ana bufferımıza kopyala
-            memcpy(&pcm_audio_buffer[segment_index * 16], pcm_buffer_int16, sizeof(int16_t) * 16);
-            segment_index++;
         }
 
         // ADIM 2: Yapay Zekaya Ver (Burada önceki mesajdaki DSP DB düzeltmelerini yapmayı unutma!)
@@ -797,7 +800,7 @@ void StartMicTask(void *argument)
             }
         }
         osDelay(10);
-    }
+
 }
 
 /* USER CODE END 4 */
