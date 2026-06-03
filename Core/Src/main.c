@@ -577,26 +577,23 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void StartNetworkTask(void *argument)
 {
-    // 1. MODEMİ BAŞLAT
+    // Check modem communication
     if (Cellular_CheckDevice() == E_AT_ERR_NONE)
     {
-        // 2. ŞEBEKEYE VE İNTERNETE BAĞLAN
+        // Connect to cellular network
         if (Cellular_SetupNetwork() == E_AT_ERR_NONE)
         {
-            // 3. MQTT BAĞLANTISINI KUR (HiveMQ Public Test Sunucusu)
-            // Port: 1883 (Şifresiz TCP)
+            // Setup MQTT client and connect to broker
             if (MQTT_OpenBroker("broker.hivemq.com", 1883) == E_AT_ERR_NONE)
             {
-                // İsim çakışmaması için cihaza özel bir Client ID veriyoruz
                 if (MQTT_ConnectClient("Alpon_Test_Device_01", NULL, NULL) == E_AT_ERR_NONE)
                 {
-                    // 4. İLK TEST MESAJINI YAYINLA
+                    // Send initial status message to MQTT topic
                     MQTT_Publish("alpon/test/status", "MQTT Baglantisi Basarili! Cihaz Online.");
 
-                    // 5. ANA İŞ DÖNGÜSÜ
+                    // Periodically publish status updates to MQTT topic
                     for(;;)
                     {
-                        // Şimdilik cihazın hayatta olduğunu belli eden periyodik bir ping/mesaj
                         MQTT_Publish("alpon/test/status", "Cihaz calismaya devam ediyor...");
                         osDelay(10000);
                     }
@@ -605,7 +602,8 @@ void StartNetworkTask(void *argument)
         }
     }
 
-    // Eğer işlemlerden biri başarısız olursa task'ı sistemi yormaması için uykuya al
+    // If we reach here, it means there was an error in modem communication or MQTT setup
+    // To not lock up the processor, we will just loop with a delay
     for(;;)
     {
         osDelay(1000);
