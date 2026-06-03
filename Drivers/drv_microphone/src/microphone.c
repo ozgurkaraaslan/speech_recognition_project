@@ -84,28 +84,43 @@ micErrorCodes_t Microphone_Read(int16_t* pBuffer, uint16_t size)
     if (!isMicOpen) return E_MIC_ERR_HW_ERROR;
     if (pBuffer == NULL) return E_MIC_ERR_BUFFER_NULL;
 
-    // Wait for either half or full buffer to be ready (10ms timeout since we expect 1ms of audio data)
-    if (osSemaphoreAcquire(rx_semaphore, 10) == osOK)
+    uint16_t samples_read = 0;
+
+    // AI bizden 16000 (size) veri istiyor.
+    // DMA her kesmede bize 16 veri (1ms) veriyor.
+    // O halde bu döngü 1000 defa çalışıp 1 saniyelik sesi birleştirecek.
+    while (samples_read < size)
     {
-        uint8_t *pdm_ptr = NULL;
+        // 1ms'lik yeni verinin gelmesini bekle (Timeout: 10ms)
+        if (osSemaphoreAcquire(rx_semaphore, 10) == osOK)
+        {
+            uint8_t *pdm_ptr = NULL;
 
-        if (data_half_ready) {
-            pdm_ptr = (uint8_t*)&pdm_rx_buffer[0];
-            data_half_ready = 0;
-        }
-        else if (data_full_ready) {
-            pdm_ptr = (uint8_t*)&pdm_rx_buffer[PDM_BUFFER_SIZE / 2];
-            data_full_ready = 0;
-        }
+            if (data_half_ready) {
+                pdm_ptr = (uint8_t*)&pdm_rx_buffer[0];
+                data_half_ready = 0;
+            }
+            else if (data_full_ready) {
+                pdm_ptr = (uint8_t*)&pdm_rx_buffer[PDM_BUFFER_SIZE / 2];
+                data_full_ready = 0;
+            }
 
-        if (pdm_ptr != NULL) {
-            PDM_Filter(pdm_ptr, (uint16_t*)pBuffer, &PDM_FilterHandler[0]);
-            return E_MIC_ERR_NONE;
+            if (pdm_ptr != NULL) {
+                // Filtrelenmiş 16 adet PCM verisini, buffer'da kaldığımız sıraya (offset) yaz
+                PDM_Filter(pdm_ptr, (uint16_t*)&pBuffer[samples_read], &PDM_FilterHandler[0]);
+
+                // Okunan örnek sayısını artır
+                samples_read += 16;
+            }
+        }
+        else
+        {
+            // Eğer 10ms boyunca DMA'dan hiç ses gelmezse (Mikrofon takıldıysa) hata dön
+            return E_MIC_ERR_UNKNOWN;
         }
     }
 
-    // If no interrupt occurs for 10ms (e.g. microphone freezes), return a timeout error
-    return E_MIC_ERR_UNKNOWN;
+    return E_MIC_ERR_NONE; // Tam 16000 veri dolduğunda başarıyla çık
 }
 
 // Close the driver and stop the I2S DMA

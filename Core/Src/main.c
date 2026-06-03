@@ -19,7 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
-#include "pdm2pcm.h"
+//#include "pdm2pcm.h"
 #include "usb_host.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -31,6 +31,9 @@
 #include "cellular.h"
 #include "mqtt.h"
 #include "app_x-cube-ai.h"
+#include "feature_extraction.h"
+#include "network.h"
+#include "MP45DT02-MEMS-Microphone.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -69,6 +72,42 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+
+// --- 1. SES VE YAPAY ZEKA TAMPONLARI ---
+#define AUDIO_SAMPLE_RATE     16000
+#define AUDIO_DURATION_SEC    1
+#define AUDIO_BUFFER_SIZE     (AUDIO_SAMPLE_RATE * AUDIO_DURATION_SEC) // 1 saniyelik veri (16000)
+
+// DMA üzerinden dolacak olan 16-bit PCM ham ses dizisi
+int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
+
+// --- 2. YENİ (STAI UYUMLU): X-CUBE-AI ÇEKİRDEK DEĞİŞKENLERİ ---
+// network.h içindeki 4880 boyutunu (122x40) doğrudan kullanıyoruz.
+__attribute__((aligned(4))) float stai_input_buffer[STAI_NETWORK_IN_1_SIZE];
+__attribute__((aligned(4))) float stai_output_buffer[STAI_NETWORK_OUT_1_SIZE];
+
+__attribute__((aligned(4))) uint8_t activations[STAI_NETWORK_ACTIVATIONS_SIZE_BYTES];
+__attribute__((aligned(8))) uint8_t stai_context_buffer[STAI_NETWORK_CONTEXT_SIZE];
+stai_network* my_network;
+
+// --- 3. DSP VE SES İŞLEME KÜTÜPHANESİ DEĞİŞKENLERİ ---
+// Kütüphanenin çalışması için gereken temel yapılar
+SpectrogramTypeDef        spectrogram_conf;
+MelFilterTypeDef          mel_filter_conf;
+MelSpectrogramTypeDef     mel_spectrogram_conf;
+LogMelSpectrogramTypeDef  log_mel_conf;
+
+// FFT İşlemleri için CMSIS-DSP Bellekleri (512 FFT boyutu)
+arm_rfft_fast_instance_f32 rfft_fast_inst;
+float32_t scratch_fft[512];
+float32_t window_buffer[512]; // Pencere (Window) için dizi
+
+// Mel Filtre Bankası Katsayıları (2020'den 600'e düşürülerek RAM kurtarıldı)
+uint32_t  mel_start_idx[40];
+uint32_t  mel_stop_idx[40];
+float32_t mel_coeffs[600];
+
+// --- 4. HÜCRESEL AĞ, MQTT VE RTOS DEĞİŞKENLERİ ---
 extern UART_HandleTypeDef huart3; 
 UART_HandleTypeDef UartHandle;
 char latest_signal_strength[64] = "Unknown";
@@ -91,7 +130,7 @@ const osThreadAttr_t networkTask_attributes = {
 osThreadId_t micTaskHandle;
 const osThreadAttr_t micTask_attributes = {
   .name = "MicTask",
-  .stack_size = 512 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal, // Ses kaçırmamak için yüksek öncelik
 };
 /* USER CODE END PV */
@@ -113,6 +152,14 @@ void StartMicTask(void *argument);
 void StartNetworkTask(void *argument); // YENİ EKLENDİ
 //void StartSignalTask(void *argument);
 //void StartTimeTask(void *argument);
+
+// DSP Fonksiyonlarımız
+void AudioDSP_Init(void);
+void Process_Audio_To_MelSpectrogram(int16_t* pcm_input, float* log_mel_output);
+
+// YENİ: Kendi Yapay Zeka (AI) Wrapper Fonksiyonlarımız
+void My_AI_Init(void);
+void My_AI_Run(float *in_data, float *out_data);
 
 /* USER CODE END PFP */
 
@@ -157,7 +204,7 @@ int main(void)
   MX_USART3_UART_Init();
   MX_CRC_Init();
   MX_I2S2_Init();
-  MX_PDM2PCM_Init();
+  //MX_PDM2PCM_Init();
   /* USER CODE BEGIN 2 */
 
   AtCommand_Open(NULL);
@@ -208,7 +255,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-STM32CubeAI_Studio_AI_Process();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -339,7 +385,7 @@ static void MX_I2S2_Init(void)
   /* USER CODE END I2S2_Init 1 */
   hi2s2.Instance = SPI2;
   hi2s2.Init.Mode = I2S_MODE_MASTER_RX;
-  hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
+  hi2s2.Init.Standard = I2S_STANDARD_MSB;
   hi2s2.Init.DataFormat = I2S_DATAFORMAT_16B;
   hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
   hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_32K;
@@ -526,14 +572,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : I2S3_WS_Pin */
-  GPIO_InitStruct.Pin = I2S3_WS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
-  HAL_GPIO_Init(I2S3_WS_GPIO_Port, &GPIO_InitStruct);
-
   /*Configure GPIO pin : BOOT1_Pin */
   GPIO_InitStruct.Pin = BOOT1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
@@ -548,14 +586,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : I2S3_MCK_Pin I2S3_SCK_Pin I2S3_SD_Pin */
-  GPIO_InitStruct.Pin = I2S3_MCK_Pin|I2S3_SCK_Pin|I2S3_SD_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : OTG_FS_OverCurrent_Pin */
   GPIO_InitStruct.Pin = OTG_FS_OverCurrent_Pin;
@@ -575,6 +605,108 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+// --- 1. YAPAY ZEKA BAŞLATMA (INIT) FONKSİYONU (STAI API) ---
+void My_AI_Init(void)
+{
+    stai_return_code ret;
+    my_network = (stai_network*)stai_context_buffer;
+    ret = stai_network_init(my_network);
+    if (ret != STAI_SUCCESS) {
+        while(1) { osDelay(10); }
+    }
+    stai_ptr act_ptr[1];
+    act_ptr[0] = (stai_ptr)activations;
+    stai_network_set_activations(my_network, act_ptr, 1);
+}
+
+// --- 2. YAPAY ZEKA ÇALIŞTIRMA FONKSİYONU (DÜZELTİLDİ) ---
+void My_AI_Run(float *in_data, float *out_data)
+{
+    stai_ptr input_ptrs[1];
+    stai_ptr output_ptrs[1];
+
+    input_ptrs[0] = (stai_ptr)in_data;
+    output_ptrs[0] = (stai_ptr)out_data;
+
+    stai_network_set_inputs(my_network, input_ptrs, 1);
+    stai_network_set_outputs(my_network, output_ptrs, 1);
+
+    // BİNGO: MODE_SYNC yerine STAI_MODE_SYNC yazılarak hata çözüldü
+    stai_network_run(my_network, STAI_MODE_SYNC);
+}
+
+void AudioDSP_Init(void)
+{
+    // --- 1. PENCERELEME (WINDOW) VE SPEKTROGRAM AYARLARI ---
+    Window_Init(window_buffer, 512, WINDOW_HANN); // 512'lik Hanning Penceresi
+
+    spectrogram_conf.pRfft    = &rfft_fast_inst;
+    spectrogram_conf.Type     = SPECTRUM_TYPE_POWER; // cnn_vis.py'deki tf.abs(spectrogram) ** 2
+    spectrogram_conf.pWindow  = window_buffer;
+    spectrogram_conf.SampRate = 16000;
+    spectrogram_conf.FrameLen = 512;
+    spectrogram_conf.FFTLen   = 512;
+    spectrogram_conf.pScratch = scratch_fft;
+
+    // ARM DSP FFT Motorunu Başlat
+    arm_rfft_fast_init_f32(&rfft_fast_inst, spectrogram_conf.FFTLen);
+
+    // --- 2. MEL FİLTRE BANKASI AYARLARI ---
+    mel_filter_conf.pStartIndices      = mel_start_idx;
+    mel_filter_conf.pStopIndices       = mel_stop_idx;
+    mel_filter_conf.pCoefficients      = mel_coeffs;
+    mel_filter_conf.NumMels            = 40;       // 40 Mel Bandı
+    mel_filter_conf.FFTLen             = 512;
+    mel_filter_conf.SampRate           = 16000;
+    mel_filter_conf.FMin               = 300.0f;   // 300 Hz Alt Sınır
+    mel_filter_conf.FMax               = 8000.0f;  // 8000 Hz Üst Sınır
+    mel_filter_conf.Formula            = MEL_SLANEY; // veya MEL_HTK
+    mel_filter_conf.Normalize          = 1;
+    mel_filter_conf.Mel2F              = 1;        // TensorFlow uyumlu mel matrisi
+
+    // Mel Matrisini Hesapla
+    MelFilterbank_Init(&mel_filter_conf);
+
+    // --- 3. ANA YAPIYI BAĞLAMA ---
+    mel_spectrogram_conf.SpectrogramConf = &spectrogram_conf;
+    mel_spectrogram_conf.MelFilter       = &mel_filter_conf;
+
+    log_mel_conf.MelSpectrogramConf = &mel_spectrogram_conf;
+    log_mel_conf.LogFormula         = LOGMELSPECTROGRAM_SCALE_DB; // TensorFlow uyumlu (Ln)
+    log_mel_conf.Ref                = 1.0f;
+    log_mel_conf.TopdB              = 80.0f;
+}
+
+// (Daha önce tanımladığımız değişkenler)
+// #define AUDIO_BUFFER_SIZE 16000
+// int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
+// float temp_mel_spectrogram[122 * 40];
+
+void Process_Audio_To_MelSpectrogram(int16_t* pcm_input, float* log_mel_output)
+{
+    float32_t float_frame[512];
+    float32_t mel_col[40];
+
+    int hop_length = 128;
+    int frame_length = 512;
+    int total_columns = (16000 - frame_length) / hop_length; // ~122 sütun
+
+    for (int col = 0; col < total_columns; col++)
+    {
+        // 1. PCM'i float'a çevir (Kütüphane kendi içinde -1.0 ile 1.0 arasına oranlar)
+        buf_to_float_normed(&pcm_input[col * hop_length], float_frame, frame_length);
+
+        // 2. Kütüphaneyle Log-Mel (DB formatında) Özelliklerini çıkar
+        LogMelSpectrogramColumn(&log_mel_conf, float_frame, mel_col);
+
+        // 3. NORMALİZASYON İPTAL! Referans repodaki gibi hiçbir formül uygulamadan doğrudan yaz!
+        for (int m = 0; m < 40; m++) {
+            log_mel_output[(col * 40) + m] = mel_col[m];
+        }
+    }
+}
+
 void StartNetworkTask(void *argument)
 {
     // Check modem communication
@@ -610,34 +742,61 @@ void StartNetworkTask(void *argument)
     }
 }
 
+
+// --- 4. ANA MİKROFON GÖREVİ ---
 void StartMicTask(void *argument)
 {
-    int16_t pcm_data[16];
+    My_AI_Init();
+    AudioDSP_Init();
+
+    // Adamın mikrofon başlatma fonksiyonları
+    microphone_init();
+    microphone_start();
 
     for(;;)
     {
-        if (Microphone_Read(pcm_data, 16) == E_MIC_ERR_NONE)
-        {
-            uint32_t total_amplitude = 0;
+        // ADIM 1: Sesi Kaydet (Adamın yöntemiyle parçalar halinde doldur)
+        uint32_t num_segments = AUDIO_BUFFER_SIZE / 16; // 1000 parça (16000 / 16)
+        uint32_t segment_index = 0;
 
-            // Calculate average amplitude of the 16 PCM samples to estimate noise level
-            for (int i = 0; i < 16; i++) {
-                // Voice data is centered around 0, so we take absolute value to get amplitude
-                total_amplitude += abs(pcm_data[i]);
+        while (segment_index < num_segments) {
+            // Adamın kütüphanesi 16 adet PCM verisi hazır olana kadar bekler
+            while(!microphone_record_sample()) {
+                osDelay(1); // RTOS'u kitlememek için küçük bir bekleme
             }
 
-            uint32_t avg_amplitude = total_amplitude / 16;
+            // Çıkan 16 veriyi ana bufferımıza kopyala
+            memcpy(&pcm_audio_buffer[segment_index * 16], pcm_buffer_int16, sizeof(int16_t) * 16);
+            segment_index++;
+        }
 
-            // Threshold check
-            if (avg_amplitude > 2000) {
-                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);   // Green LED HIGH
-            } else {
-                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET); // Green LED LOW
+        // ADIM 2: Yapay Zekaya Ver (Burada önceki mesajdaki DSP DB düzeltmelerini yapmayı unutma!)
+        Process_Audio_To_MelSpectrogram(pcm_audio_buffer, stai_input_buffer);
+        My_AI_Run(stai_input_buffer, stai_output_buffer);
+
+
+			// ADIM 5: Karar Ver ve MQTT ile yolla
+			float prob_yes   = stai_output_buffer[0];
+			float prob_no    = stai_output_buffer[1];
+
+            if (prob_yes > 0.75f) {
+                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);
+                HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_RESET);
+                MQTT_Publish("alpon/test/status", "yes");
+                osDelay(2000);
             }
-        } else {
-			// If the semaphore times out (microphone freezes), to prevent locking up the processor:
-			osDelay(1);
-		}
+            else if (prob_no > 0.75f) {
+                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_SET);
+                MQTT_Publish("alpon/test/status", "no");
+                osDelay(2000);
+            }
+            else {
+                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);
+                HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_SET);
+            }
+        }
+        osDelay(10);
     }
 }
 
