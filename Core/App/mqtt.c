@@ -37,6 +37,46 @@ atCommandErrorCodes_t MQTT_OpenBroker(const char* host, uint16_t port)
     return res;
 }
 
+atCommandErrorCodes_t MQTT_CloseBroker(void)
+{
+    AtCommandReq_t req;
+    char cmd_buf[32];
+
+    // TCP Soketini kapat (0: client id)
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+QMTCLOSE=0");
+
+    memset(&req, 0, sizeof(AtCommandReq_t));
+    req.command = cmd_buf;
+    // Kapanma URC'si (0: client id, 0: başarılı) VEYA zaten kapalıysa ERROR dönebilir.
+    // Biz burada başarısızlığı tolere edebiliriz çünkü amacımız sadece temizlik yapmak.
+    req.expected_resp = "OK";
+    req.timeout_ms = 5000;
+    req.resp_buffer = mqtt_resp_buffer;
+    req.resp_buffer_len = sizeof(mqtt_resp_buffer);
+
+    atCommandErrorCodes_t res = E_AT_ERR_HW_ERROR;
+
+    if (osMutexAcquire(at_driver_mutexHandle, osWaitForever) == osOK) {
+        // Önce client'ı disconnect etmeyi dene (İsteğe bağlı)
+        AtCommandReq_t disc_req;
+        memset(&disc_req, 0, sizeof(AtCommandReq_t));
+        disc_req.command = "AT+QMTDISC=0";
+        disc_req.expected_resp = "OK";
+        disc_req.timeout_ms = 3000;
+        disc_req.resp_buffer = mqtt_resp_buffer;
+        disc_req.resp_buffer_len = sizeof(mqtt_resp_buffer);
+        AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &disc_req); // Sonucunu umursamıyoruz, denedik
+
+        osDelay(500); // Modeme toparlanması için biraz süre ver
+
+        // Sonra TCP soketini zorla kapat
+        res = AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req);
+        osMutexRelease(at_driver_mutexHandle);
+    }
+
+    return res;
+}
+
 // 2. CLIENT GİRİŞİ YAP (MQTT CONNECT)
 atCommandErrorCodes_t MQTT_ConnectClient(const char* client_id, const char* username, const char* password)
 {

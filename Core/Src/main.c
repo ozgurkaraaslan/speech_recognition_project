@@ -712,37 +712,57 @@ void Process_Audio_To_MelSpectrogram(int16_t* pcm_input, float* log_mel_output)
 
 void StartNetworkTask(void *argument)
 {
-    // Check modem communication
-    if (Cellular_CheckDevice() == E_AT_ERR_NONE)
-    {
-        // Connect to cellular network
-        if (Cellular_SetupNetwork() == E_AT_ERR_NONE)
-        {
-            // Setup MQTT client and connect to broker
-            if (MQTT_OpenBroker("broker.hivemq.com", 1883) == E_AT_ERR_NONE)
-            {
-                if (MQTT_ConnectClient("Alpon_Test_Device_01", NULL, NULL) == E_AT_ERR_NONE)
-                {
-                    // Send initial status message to MQTT topic
-                    MQTT_Publish("alpon/test/status", "MQTT Baglantisi Basarili! Cihaz Online.");
+	// AĞ KURULUM DÖNGÜSÜ
+	for(;;)
+	{
+		// 1. Modeme ulaşılabiliyor mu?
+		if (Cellular_CheckDevice() == E_AT_ERR_NONE)
+		{
+			// 2. Hücresel şebekeye bağlı mıyız?
+			if (Cellular_SetupNetwork() == E_AT_ERR_NONE)
+			{
+				// 3. HAYALET BAĞLANTI TEMİZLİĞİ
+				// İşlemci resetlenmiş ama modem açık kalmış olabilir. Temiz bir sayfa açıyoruz.
+				MQTT_CloseBroker();
+				osDelay(2000); // Modemin soketi düşürmesini bekle
 
-                    // Periodically publish status updates to MQTT topic
-                    for(;;)
-                    {
-                        MQTT_Publish("alpon/test/status", "Cihaz calismaya devam ediyor...");
-                        osDelay(10000);
-                    }
-                }
-            }
-        }
-    }
+				// 4. Broker'a Bağlan
+				if (MQTT_OpenBroker("broker.hivemq.com", 1883) == E_AT_ERR_NONE)
+				{
+					// 5. Client Girişi
+					if (MQTT_ConnectClient("Alpon_Test_Device_01", NULL, NULL) == E_AT_ERR_NONE)
+					{
+						MQTT_Publish("speech_recognition/mqtt_status", "MQTT Baglantisi Basarili! Cihaz Online.");
 
-    // If we reach here, it means there was an error in modem communication or MQTT setup
-    // To not lock up the processor, we will just loop with a delay
-    for(;;)
-    {
-        osDelay(1000);
-    }
+						osDelay(5000);
+
+						// 6. ANA YAYIN DÖNGÜSÜ (Bağlantı kopana kadar burada kalır)
+						while(1)
+						{
+							// Mesajı gönder ve sonucunu dinle
+							atCommandErrorCodes_t pub_status = MQTT_Publish("speech_recognition/mqtt_status", "Cihaz calismaya devam ediyor...");
+
+							// Eğer yayın başarısız olursa (Bağlantı koptu, modem kilitlendi vs.)
+							if (pub_status != E_AT_ERR_NONE)
+							{
+								// İÇ DÖNGÜYÜ KIR!
+								// Bu sayede kod aşağıdaki osDelay(5000)'e düşer ve dış döngü başa sarıp
+								// MQTT_CloseBroker() ile temizlik yaparak yeniden bağlanmayı dener.
+								break;
+							}
+
+							osDelay(10000); // Sorun yoksa 10 saniyede bir ping atmaya devam et
+						}
+					}
+				}
+			}
+		}
+
+		// Eğer buraya ulaştıysak: Modem cevap vermiyor, internet koptu veya Broker düştü demektir.
+		// Hata durumunda 2 saniye bekle ve BAŞTAN (Temizlik yaparak) tekrar bağlanmayı dene!
+		osDelay(2000);
+	}
+
 }
 
 
@@ -786,13 +806,13 @@ void StartMicTask(void *argument)
             if (prob_yes > 0.75f) {
                 HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);
                 HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_RESET);
-                MQTT_Publish("alpon/test/status", "yes");
+                MQTT_Publish("speech_recognition/result", "1");
                 osDelay(50);
             }
             else if (prob_no > 0.75f) {
                 HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
                 HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_SET);
-                MQTT_Publish("alpon/test/status", "no");
+                MQTT_Publish("speech_recognition/result", "0");
                 osDelay(50);
             }
             else {

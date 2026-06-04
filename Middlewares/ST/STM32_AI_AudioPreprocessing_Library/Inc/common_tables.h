@@ -19,7 +19,7 @@
 #ifndef _COMMON_TABLES_H
 #define _COMMON_TABLES_H
 
-#include "DSP/Include/arm_math.h"
+#include "arm_math.h"
 
 extern const float32_t hannWin_1024[1024];
 extern const float32_t hannWin_2048[2048];

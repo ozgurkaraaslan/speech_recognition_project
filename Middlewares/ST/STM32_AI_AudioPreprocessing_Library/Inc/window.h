@@ -23,7 +23,7 @@
  extern "C" {
 #endif
 
-#include "DSP/Include/arm_math.h"
+#include "arm_math.h"
 
 /**
  * @addtogroup groupWindow
