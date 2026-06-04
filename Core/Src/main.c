@@ -83,8 +83,6 @@ __attribute__((section(".ccmram"))) int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
 // --- 4. HÜCRESEL AĞ, MQTT VE RTOS DEĞİŞKENLERİ ---
 extern UART_HandleTypeDef huart3; 
 UART_HandleTypeDef UartHandle;
-char latest_signal_strength[64] = "Unknown";
-char latest_network_time[64] = "Unknown";
 
 osMutexId_t at_driver_mutexHandle;
 const osMutexAttr_t at_driver_mutex_attributes = {
@@ -107,7 +105,6 @@ const osThreadAttr_t micTask_attributes = {
   .priority = (osPriority_t) osPriorityAboveNormal, // Ses kaçırmamak için yüksek öncelik
 };
 
-osSemaphoreId_t rx_semaphore;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -168,7 +165,6 @@ int main(void)
   MX_USART3_UART_Init();
   MX_CRC_Init();
   MX_I2S2_Init();
-  //MX_PDM2PCM_Init();
   /* USER CODE BEGIN 2 */
 
   AtCommand_Open(NULL);
@@ -184,7 +180,6 @@ int main(void)
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
-  rx_semaphore = osSemaphoreNew(1, 0, NULL);
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
