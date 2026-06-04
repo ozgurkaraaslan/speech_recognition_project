@@ -26,7 +26,6 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdlib.h>
-#include "microphone.h"
 #include "at_command.h"
 #include "cellular.h"
 #include "mqtt.h"
@@ -79,7 +78,9 @@ const osThreadAttr_t defaultTask_attributes = {
 #define AUDIO_BUFFER_SIZE     (AUDIO_SAMPLE_RATE * AUDIO_DURATION_SEC) // 1 saniyelik veri (16000)
 
 // DMA üzerinden dolacak olan 16-bit PCM ham ses dizisi
-int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
+//int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
+
+__attribute__((section(".ccmram"))) int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
 
 // --- 2. YENİ (STAI UYUMLU): X-CUBE-AI ÇEKİRDEK DEĞİŞKENLERİ ---
 // network.h içindeki 4880 boyutunu (122x40) doğrudan kullanıyoruz.
@@ -210,7 +211,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   AtCommand_Open(NULL);
-  Microphone_Open(NULL);
+  microphone_init();
 
   /* USER CODE END 2 */
 
@@ -779,24 +780,24 @@ void StartMicTask(void *argument)
 
 
 			// ADIM 5: Karar Ver ve MQTT ile yolla
-			float prob_yes   = stai_output_buffer[0];
-			float prob_no    = stai_output_buffer[1];
+			float prob_yes   = stai_output_buffer[2];
+			float prob_no    = stai_output_buffer[0];
 
             if (prob_yes > 0.75f) {
                 HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);
                 HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_RESET);
                 MQTT_Publish("alpon/test/status", "yes");
-                osDelay(2000);
+                osDelay(50);
             }
             else if (prob_no > 0.75f) {
                 HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
                 HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_SET);
                 MQTT_Publish("alpon/test/status", "no");
-                osDelay(2000);
+                osDelay(50);
             }
             else {
-                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);
-                HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_SET);
+                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_RESET);
             }
         }
         osDelay(10);
