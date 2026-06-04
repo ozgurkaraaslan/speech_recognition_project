@@ -3,13 +3,13 @@
 #include <stdio.h>
 #include <string.h>
 
-// main.c içerisinde oluşturulan mutex'i çekiyoruz
+// Reference mutex created in main.c
 extern osMutexId_t at_driver_mutexHandle;
 
-// MQTT Middleware'ine özel iç tampon
+// Internal buffer for MQTT middleware
 static char mqtt_resp_buffer[256];
 
-// 1. BROKER'A BAĞLAN (TCP SOKETİ AÇ)
+// 1. Open broker connection (open TCP socket)
 atCommandErrorCodes_t MQTT_OpenBroker(const char* host, uint16_t port)
 {
     AtCommandReq_t req;
@@ -20,15 +20,15 @@ atCommandErrorCodes_t MQTT_OpenBroker(const char* host, uint16_t port)
 
     memset(&req, 0, sizeof(AtCommandReq_t));
     req.command = cmd_buf;
-    // Bağlantı başarısı URC üzerinden okunur: "+QMTOPEN: 0,0"
+    // Successful connection indicated by URC: "+QMTOPEN: 0,0"
     req.expected_resp = "+QMTOPEN: 0,0";
-    req.timeout_ms = 15000; // DNS Çözümleme ve TCP için uzun süre tanıyoruz
+    req.timeout_ms = 15000; // Allow extra time for DNS resolution and TCP
     req.resp_buffer = mqtt_resp_buffer;
     req.resp_buffer_len = sizeof(mqtt_resp_buffer);
 
     atCommandErrorCodes_t res = E_AT_ERR_HW_ERROR;
 
-    // İşlemciyi kilitliyoruz ki başka bir task araya girip UART hattını bozmasın
+    // Acquire mutex to protect UART transactions
     if (osMutexAcquire(at_driver_mutexHandle, osWaitForever) == osOK) {
         res = AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req);
         osMutexRelease(at_driver_mutexHandle);
@@ -42,13 +42,12 @@ atCommandErrorCodes_t MQTT_CloseBroker(void)
     AtCommandReq_t req;
     char cmd_buf[32];
 
-    // TCP Soketini kapat (0: client id)
+    // Close TCP socket (0: client id)
     snprintf(cmd_buf, sizeof(cmd_buf), "AT+QMTCLOSE=0");
 
     memset(&req, 0, sizeof(AtCommandReq_t));
     req.command = cmd_buf;
-    // Kapanma URC'si (0: client id, 0: başarılı) VEYA zaten kapalıysa ERROR dönebilir.
-    // Biz burada başarısızlığı tolere edebiliriz çünkü amacımız sadece temizlik yapmak.
+    // Close URC may return ERROR if already closed; tolerate failure (cleanup purpose)
     req.expected_resp = "OK";
     req.timeout_ms = 5000;
     req.resp_buffer = mqtt_resp_buffer;
@@ -57,7 +56,7 @@ atCommandErrorCodes_t MQTT_CloseBroker(void)
     atCommandErrorCodes_t res = E_AT_ERR_HW_ERROR;
 
     if (osMutexAcquire(at_driver_mutexHandle, osWaitForever) == osOK) {
-        // Önce client'ı disconnect etmeyi dene (İsteğe bağlı)
+        // Optionally attempt to disconnect client first
         AtCommandReq_t disc_req;
         memset(&disc_req, 0, sizeof(AtCommandReq_t));
         disc_req.command = "AT+QMTDISC=0";
@@ -65,9 +64,9 @@ atCommandErrorCodes_t MQTT_CloseBroker(void)
         disc_req.timeout_ms = 3000;
         disc_req.resp_buffer = mqtt_resp_buffer;
         disc_req.resp_buffer_len = sizeof(mqtt_resp_buffer);
-        AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &disc_req); // Sonucunu umursamıyoruz, denedik
+        AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &disc_req); // Ignore result; best-effort disconnect
 
-        osDelay(500); // Modeme toparlanması için biraz süre ver
+        osDelay(500); // Allow modem to recover
 
         // Sonra TCP soketini zorla kapat
         res = AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req);
@@ -77,13 +76,13 @@ atCommandErrorCodes_t MQTT_CloseBroker(void)
     return res;
 }
 
-// 2. CLIENT GİRİŞİ YAP (MQTT CONNECT)
+// 2. Client connect (MQTT CONNECT)
 atCommandErrorCodes_t MQTT_ConnectClient(const char* client_id, const char* username, const char* password)
 {
     AtCommandReq_t req;
     char cmd_buf[256];
 
-    // Username ve password durumuna göre komutu dinamik oluştur
+    // Build command depending on username/password presence
     if (username == NULL || password == NULL) {
         snprintf(cmd_buf, sizeof(cmd_buf), "AT+QMTCONN=0,\"%s\"", client_id);
     } else {
@@ -92,7 +91,7 @@ atCommandErrorCodes_t MQTT_ConnectClient(const char* client_id, const char* user
 
     memset(&req, 0, sizeof(AtCommandReq_t));
     req.command = cmd_buf;
-    // Başarı URC'si: 0 (client id), 0 (başarılı), 0 (bağlantı kabul edildi)
+    // Success URC: +QMTCONN: 0,0,0 (client id, success, accepted)
     req.expected_resp = "+QMTCONN: 0,0,0";
     req.timeout_ms = 10000;
     req.resp_buffer = mqtt_resp_buffer;
@@ -108,18 +107,18 @@ atCommandErrorCodes_t MQTT_ConnectClient(const char* client_id, const char* user
     return res;
 }
 
-// 3. MESAJ YAYINLA (MQTT PUBLISH)
+// 3. Publish message (MQTT PUBLISH)
 atCommandErrorCodes_t MQTT_Publish(const char* topic, const char* payload)
 {
     AtCommandReq_t req;
     char cmd_buf[128];
 
-    // ADIM 1: Publish komutunu yolla (QOS=1, Retain=0, MsgID=1)
+    // STEP 1: Send publish command (QOS=1, Retain=0, MsgID=1)
     snprintf(cmd_buf, sizeof(cmd_buf), "AT+QMTPUB=0,1,1,0,\"%s\"", topic);
 
     memset(&req, 0, sizeof(AtCommandReq_t));
     req.command = cmd_buf;
-    req.expected_resp = ">"; // Modem veriyi girmemiz için '>' bekler
+    req.expected_resp = ">"; // Modem responds with '>' when ready to receive payload
     req.timeout_ms = 5000;
     req.resp_buffer = mqtt_resp_buffer;
     req.resp_buffer_len = sizeof(mqtt_resp_buffer);
@@ -128,26 +127,26 @@ atCommandErrorCodes_t MQTT_Publish(const char* topic, const char* payload)
 
     if (osMutexAcquire(at_driver_mutexHandle, osWaitForever) == osOK)
     {
-        // Komutu yolla ve '>' dönmesini bekle
+        // Send command and wait for '>' prompt
         if (AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req) == E_AT_ERR_NONE)
         {
             AtCommandRawReq_t raw_req;
 
-            // ADIM 2: Modemin içine Payload'u (Saf veriyi) bas
+            // STEP 2: Send payload bytes to modem
             raw_req.data = (uint8_t*)payload;
             raw_req.length = (uint16_t)strlen(payload);
             raw_req.timeout_ms = 2000;
             AtCommand_Ioctl(E_AT_IOCTL_SEND_RAW, &raw_req);
 
-            // ADIM 3: İletimi bitirmek için CTRL+Z (0x1A) bas
+            // STEP 3: Terminate transmission with CTRL+Z (0x1A)
             uint8_t ctrl_z = 0x1A;
             raw_req.data = &ctrl_z;
             raw_req.length = 1;
             raw_req.timeout_ms = 1000;
             res = AtCommand_Ioctl(E_AT_IOCTL_SEND_RAW, &raw_req);
 
-            // Not: İdeal akışta burada yayınlandı URC'si (+QMTPUB: 0,1,0) beklenebilir.
-            // Asenkron gecikmeleri engellemek için doğrudan başarılı kabul ediyoruz.
+            // Note: In ideal flow a publish URC (+QMTPUB: 0,1,0) may follow.
+            // To avoid async delays we consider the operation successful here.
         }
         osMutexRelease(at_driver_mutexHandle);
     }

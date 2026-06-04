@@ -8,10 +8,10 @@ extern "C" {
 #include "at_command.h"
 #include <stdint.h>
 
-/* --- Varsayılan Ayarlar --- */
+/* --- Default settings --- */
 #define MQTT_DEFAULT_PORT 1883
 
-/* --- Export Edilen Fonksiyonlar --- */
+/* --- Exported functions --- */
 atCommandErrorCodes_t MQTT_OpenBroker(const char* host, uint16_t port);
 atCommandErrorCodes_t MQTT_CloseBroker(void);
 atCommandErrorCodes_t MQTT_ConnectClient(const char* client_id, const char* username, const char* password);

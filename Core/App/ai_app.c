@@ -1,11 +1,11 @@
 #include "ai_app.h"
 #include "cmsis_os.h"
 
-// Dışa açık AI Tamponları
+// Public AI buffers
 __attribute__((aligned(4))) float stai_input_buffer[STAI_NETWORK_IN_1_SIZE];
 __attribute__((aligned(4))) float stai_output_buffer[STAI_NETWORK_OUT_1_SIZE];
 
-// Sadece AI Motoruna özel (gizli) çalışma alanları
+// Private working buffers for the AI engine
 static __attribute__((aligned(4))) uint8_t activations[STAI_NETWORK_ACTIVATIONS_SIZE_BYTES];
 static __attribute__((aligned(8))) uint8_t stai_context_buffer[STAI_NETWORK_CONTEXT_SIZE];
 static stai_network* my_network;
@@ -17,7 +17,7 @@ void My_AI_Init(void)
     ret = stai_network_init(my_network);
 
     if (ret != STAI_SUCCESS) {
-        while(1) { osDelay(10); } // Başlatma hatası durumunda kilitlen
+        while(1) { osDelay(10); } // Halt on initialization error
     }
 
     stai_ptr act_ptr[1];

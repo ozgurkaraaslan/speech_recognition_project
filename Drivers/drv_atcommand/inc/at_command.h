@@ -41,10 +41,11 @@ typedef struct {
 } AtCommandReq_t;
 
 typedef struct {
-    uint8_t* data;       // Gönderilecek saf verinin işaretçisi (payload)
-    uint16_t length;     // Verinin uzunluğu
-    uint32_t timeout_ms; // UART iletimi için maksimum bekleme süresi
+    uint8_t* data;       // Pointer to raw data payload to send
+    uint16_t length;     // Length of the data in bytes
+    uint32_t timeout_ms; // Timeout for UART transmission (ms)
 } AtCommandRawReq_t;
+
 
 // API Function Prototypes
 atCommandErrorCodes_t AtCommand_Open(void* vpParam);

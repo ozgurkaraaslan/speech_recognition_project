@@ -87,7 +87,7 @@ static atCommandErrorCodes_t SendRawData(AtCommandRawReq_t* req)
 {
     if (req == NULL || req->data == NULL) return E_AT_ERR_HW_ERROR;
 
-    // Sadece veriyi yolla, sonuna hiçbir şey ekleme
+    // Transmit raw data as-is (do not append any terminators)
     if (HAL_UART_Transmit(&AT_HW_USART, req->data, req->length, req->timeout_ms) == HAL_OK) {
         return E_AT_ERR_NONE;
     }

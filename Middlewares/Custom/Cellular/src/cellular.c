@@ -17,17 +17,17 @@ static atCommandErrorCodes_t SendCommand(const char* cmd, const char* expect, ui
     return AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req);
 }
 
-// Yardımcı Fonksiyon: Şebeke Kaydını Bekle
+// Helper function: wait for network registration
 static atCommandErrorCodes_t Cellular_WaitForRegistration(void)
 {
     uint8_t retry_count = 0;
-    const uint8_t max_retries = 30; // 30 deneme * 2 saniye = 60 sn bekleme
+    const uint8_t max_retries = 30; // 30 retries * 2s = 60s total wait
 
     AtCommandReq_t req;
 
     while (retry_count < max_retries)
     {
-        // 1. Struct'ı güvenli şekilde sıfırla
+        // 1. Zero the request struct
         memset(&req, 0, sizeof(AtCommandReq_t));
         req.command = "AT+CGREG?";
         req.expected_resp = "OK";
@@ -35,24 +35,24 @@ static atCommandErrorCodes_t Cellular_WaitForRegistration(void)
         req.resp_buffer = internal_resp;
         req.resp_buffer_len = sizeof(internal_resp);
 
-        // 2. Komutu gönder (Mutex driver'ın içinde olduğu için güvendeyiz)
+        // 2. Send command (safe within driver mutex)
         if (AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req) == E_AT_ERR_NONE)
         {
-            // 3. Sürücünün bizim için ayırdığı satırları (lines) tek tek dön!
+            // 3. Iterate parsed lines returned by the driver
             for(int i = 0; i < req.line_count; i++)
             {
                 if (req.lines[i] != NULL)
                 {
-                    // Artık \0 sorunu yok, çünkü her satırı ayrı ayrı inceliyoruz
+                    // No NUL issues since lines are checked individually
                     if (strstr(req.lines[i], ",1") != NULL || strstr(req.lines[i], ",5") != NULL)
                     {
-                        return E_AT_ERR_NONE; // Başarılı!
+                        return E_AT_ERR_NONE; // Success
                     }
                 }
             }
         }
 
-        // Eğer kayıt olmadıysa uyu ve tekrar dene
+        // Not registered yet: wait and retry
         osDelay(2000);
         retry_count++;
     }
@@ -60,7 +60,7 @@ static atCommandErrorCodes_t Cellular_WaitForRegistration(void)
     return E_AT_ERR_TIMEOUT;
 }
 
-// Yardımcı Fonksiyon: PDP Context Aktif mi? (Örn: context_id = 1)
+// Helper function: is PDP context active? (e.g., context_id = 1)
 static atCommandErrorCodes_t Cellular_CheckPDPContext(uint8_t context_id)
 {
     AtCommandReq_t req;
@@ -83,7 +83,7 @@ static atCommandErrorCodes_t Cellular_CheckPDPContext(uint8_t context_id)
             {
                 if (strstr(req.lines[i], search_str) != NULL)
                 {
-                    return E_AT_ERR_NONE; // Başarılı!
+                    return E_AT_ERR_NONE; // Success
                 }
             }
         }
@@ -97,41 +97,41 @@ atCommandErrorCodes_t Cellular_CheckDevice(void) {
     return E_AT_ERR_NONE;
 }
 
-// ANA FONKSİYON: Tüm Ağ Kurulumunu ve Kontrollerini Yapar
+// MAIN FUNCTION: performs full network setup and checks
 atCommandErrorCodes_t Cellular_SetupNetwork(void)
 {
     atCommandErrorCodes_t status;
     char cmd_buf[64];
 
-    // --- 1. ADIM: ŞEBEKE KAYDINI BEKLE ---
+    // --- STEP 1: Wait for network registration ---
     status = Cellular_WaitForRegistration();
     if (status != E_AT_ERR_NONE) {
         return status;
     }
 
-    // --- 2. ADIM: APN KONFİGÜRASYONU ---
+    // --- STEP 2: Configure APN ---
     sprintf(cmd_buf, "AT+CGDCONT=1,\"IPV4V6\",\"%s\"", CELL_APN);
     status = SendCommand(cmd_buf, "OK", 2000);
     if (status != E_AT_ERR_NONE) {
         return status;
     }
 
-    // --- 3. ADIM: PDP CONTEXT KONTROLÜ VE AKTİVASYONU ---
-    // Eğer halihazırda aktif değilse aktifleştirmeyi dene
+    // --- STEP 3: PDP context check and activation ---
+    // If not active, attempt activation
     if (Cellular_CheckPDPContext(1) != E_AT_ERR_NONE)
     {
-        // Quectel'in TCP/IP motorunu kullanacağımız için context'i aktifleştiriyoruz
+        // Activate PDP context for Quectel TCP/IP engine
         status = SendCommand("AT+QIACT=1", "OK", 10000);
 
         if (status != E_AT_ERR_NONE) {
-            // Eğer ERROR dönerse, her ihtimale karşı gerçekten aktif olup olmadığını son kez sor
+            // If ERROR returned, double-check activation before failing
             if (Cellular_CheckPDPContext(1) != E_AT_ERR_NONE) {
-                return E_AT_ERR_HW_ERROR; // Maalesef IP alamadık
+                return E_AT_ERR_HW_ERROR; // Failed to obtain IP
             }
         }
     }
 
-    return E_AT_ERR_NONE; // Tüm kontrollerden geçti, internete çıkmaya hazır!
+    return E_AT_ERR_NONE; // All checks passed, ready to access network
 }
 
 atCommandErrorCodes_t Cellular_ConnectBroker(void) {
@@ -143,21 +143,21 @@ atCommandErrorCodes_t Cellular_ConnectBroker(void) {
     return SendCommand(conn_cmd, "+QIOPEN: 0,0", 15000);
 }
 
-// Ham Veri Gönderme (MQTT Paketleri için)
+// Raw data transmission (for MQTT packets)
 atCommandErrorCodes_t Cellular_TransmitRaw(uint8_t* data, uint16_t len) {
-	/*
+    /*
     char cmd[32];
 
-    // 0 numaralı TCP soketinden 'len' kadar veri göndereceğimizi bildir
+    // Notify modem to send 'len' bytes on TCP socket 0
     sprintf(cmd, "AT+QISEND=0,%d", len);
 
-    // EG25-G komutu alınca veri beklediğini belirtmek için ">" işareti döner.
+    // EG25-G responds with ">" when ready to receive bytes
     if (SendCommand(cmd, ">", 2000) == E_AT_ERR_NONE)
     {
-        // ">" işaretini gördük! Şimdi HAM BAYTLARI UART'a yollayabiliriz.
+        // Transmit raw bytes over UART
         HAL_UART_Transmit(&AT_HW_USART, data, len, 5000);
 
-        // Veriyi yolladıktan sonra modemin "SEND OK" demesini bekle
+        // Wait for modem to report "SEND OK"
         return SendCommand("AT", "SEND OK", 5000);
     }*/
     return E_AT_ERR_UNKNOWN;

@@ -3,7 +3,7 @@
 
 #include "network.h"
 
-// main.c'nin sonuçları okuyabilmesi veya ses verebilmesi için bu dizileri dışa açıyoruz
+// Export buffers so `main.c` can read results or trigger outputs
 extern __attribute__((aligned(4))) float stai_input_buffer[STAI_NETWORK_IN_1_SIZE];
 extern __attribute__((aligned(4))) float stai_output_buffer[STAI_NETWORK_OUT_1_SIZE];
 

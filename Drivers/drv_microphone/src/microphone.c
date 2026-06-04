@@ -1,26 +1,26 @@
 #include "microphone.h"
 #include "cmsis_os.h"
 #include "arm_math.h"
-#include "FIR_Filter_Coef.h" // Adamın filtre katsayıları
+#include "FIR_Filter_Coef.h" // FIR filter coefficients
 #include <string.h>
 
-extern I2S_HandleTypeDef hi2s2; // HAL'dan I2S donanımını çekiyoruz
+extern I2S_HandleTypeDef hi2s2; // I2S hardware handle from HAL
 
 static uint8_t isMicOpen = 0;
 static osSemaphoreId_t rx_semaphore = NULL;
 
-// --- FIR FİLTRESİ VE TAMPON AYARLARI ---
+// --- FIR filter and buffer configuration ---
 #define FIR_TAPS                     258U
 #define FIR_DECIMATION_FACTOR        64U
 #define PDM_SAMPLE_BITS              16U
 
-#define PDM_WORDS_PER_MS             64   // 1 ms ses = 64 adet 16-bit PDM verisi
-#define PDM_BUFFER_DOUBLE_SIZE       128  // Ping-Pong (Double Buffer) için 128
-#define PCM_SAMPLES_PER_MS           16   // Çıkacak olan PCM ses adedi
+#define PDM_WORDS_PER_MS             64   // 1 ms audio = 64 16-bit PDM words
+#define PDM_BUFFER_DOUBLE_SIZE       128  // Double buffer size for ping-pong
+#define PCM_SAMPLES_PER_MS           16   // Number of PCM samples produced per ms
 #define FLOAT32_PDM_BUFFER_SIZE      1024 // 64 * 16 bit
 #define FIR_STATE_BUFFER_SIZE        (FLOAT32_PDM_BUFFER_SIZE + FIR_TAPS - 1)
 
-// --- BELLEK ALANLARI ---
+// --- Memory regions ---
 static uint16_t pdm_rx_buffer[PDM_BUFFER_DOUBLE_SIZE];
 static float32_t pdm_float_buffer[FLOAT32_PDM_BUFFER_SIZE];
 static float32_t pcm_float_buffer[PCM_SAMPLES_PER_MS];
@@ -31,7 +31,7 @@ static arm_fir_decimate_instance_f32 fir_decimate_inst;
 static volatile uint8_t data_half_ready = 0;
 static volatile uint8_t data_full_ready = 0;
 
-// --- ÖZEL YARDIMCI FONKSİYONLAR ---
+// --- Helper functions ---
 static void convert_to_pdm_float32(uint16_t* src, float32_t* dst, uint8_t buffer_index) {
     uint32_t bitIndex = 0;
     uint16_t modifiedCurrentWord = 0;
@@ -55,7 +55,7 @@ static void convert_pcm_f32_to_int16(float32_t* src, int16_t* dst, size_t len) {
     }
 }
 
-// --- ANA DRIVER API ---
+// --- Driver API ---
 micErrorCodes_t Microphone_Open(void* vpParam)
 {
     if (isMicOpen) return E_MIC_ERR_NONE;
@@ -67,12 +67,12 @@ micErrorCodes_t Microphone_Open(void* vpParam)
         rx_semaphore = osSemaphoreNew(1, 0, NULL);
     }
 
-    // CMSIS-DSP FIR Filtresini Başlat
+    // Initialize CMSIS-DSP FIR decimator
     if (arm_fir_decimate_init_f32(&fir_decimate_inst, FIR_TAPS, FIR_DECIMATION_FACTOR, fir_coef, fir_state, FLOAT32_PDM_BUFFER_SIZE) != ARM_MATH_SUCCESS) {
         return E_MIC_ERR_HW_ERROR;
     }
 
-    // I2S DMA Başlat
+    // Start I2S DMA receive
     if (HAL_I2S_Receive_DMA(&hi2s2, pdm_rx_buffer, PDM_BUFFER_DOUBLE_SIZE) != HAL_OK) {
         return E_MIC_ERR_HW_ERROR;
     }
@@ -91,12 +91,12 @@ micErrorCodes_t Microphone_Read(int16_t* pBuffer, uint16_t size)
 
     while (samples_read < size)
     {
-        // 1ms'lik yeni verinin gelmesini bekle (Semaphore ile)
+        // Wait for new 1ms data via semaphore
         if (osSemaphoreAcquire(rx_semaphore, 10) == osOK)
         {
-            uint8_t buffer_index = 0xFF; // Geçersiz indeks
+            uint8_t buffer_index = 0xFF; // Invalid index
 
-            // Hangi yarının dolduğunu kontrol et
+            // Determine which half-buffer filled
             if (data_half_ready) {
                 buffer_index = 0;
                 data_half_ready = 0;
@@ -107,23 +107,23 @@ micErrorCodes_t Microphone_Read(int16_t* pBuffer, uint16_t size)
             }
 
             if (buffer_index != 0xFF) {
-                // 1. Adım: PDM (Bit) -> Float Çevrimi (+32767/-32768)
+                // Step 1: Convert PDM bits to float samples (+32767/-32768)
                 convert_to_pdm_float32(pdm_rx_buffer, pdm_float_buffer, buffer_index);
 
-                // 2. Adım: CMSIS-DSP ile FIR Desimasyonu (Float -> Float)
+                // Step 2: FIR decimation (float -> float)
                 arm_fir_decimate_f32(&fir_decimate_inst, pdm_float_buffer, pcm_float_buffer, FLOAT32_PDM_BUFFER_SIZE);
 
-                // 3. Adım: Float -> Int16 Çevrimi
+                // Step 3: Convert float to int16
                 convert_pcm_f32_to_int16(pcm_float_buffer, pcm_int16_temp, PCM_SAMPLES_PER_MS);
 
-                // 4. Adım: Sonuçları kullanıcının ana tamponuna kopyala
+                // Step 4: Copy results into user's main buffer
                 memcpy(&pBuffer[samples_read], pcm_int16_temp, PCM_SAMPLES_PER_MS * sizeof(int16_t));
 
                 samples_read += PCM_SAMPLES_PER_MS;
             }
         }
         else {
-            return E_MIC_ERR_UNKNOWN; // 10ms Timeout (Donanım takıldı)
+            return E_MIC_ERR_UNKNOWN; // 10ms timeout (hardware stuck)
         }
     }
     return E_MIC_ERR_NONE;
@@ -139,7 +139,7 @@ micErrorCodes_t Microphone_Close(void* vpParam)
 micErrorCodes_t Microphone_Ioctl(MIC_IOCTL_COMMANDS_T eCommand, void* vpParam)
 {
     if (!isMicOpen) return E_MIC_ERR_HW_ERROR;
-    // IOCTL İşlemleri (Pause, Resume vs. eklenebilir)
+    // IOCTL operations (pause/resume, etc. may be added)
     return E_MIC_ERR_NONE;
 }
 

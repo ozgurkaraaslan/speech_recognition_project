@@ -3,7 +3,7 @@
 
 #include "main.h"
 
-// Hata kodları ve IOCTL komutları (Senin orijinal yapın)
+// Error codes and IOCTL commands
 typedef enum {
     E_MIC_ERR_NONE = 0,
     E_MIC_ERR_HW_ERROR,
@@ -18,7 +18,7 @@ typedef enum {
     E_MIC_IOCTL_GET_VERSION
 } MIC_IOCTL_COMMANDS_T;
 
-#define MICROPHONE_DRIVER_SW_VERSION 2.0f // FIR Filtreli Yeni Versiyon
+#define MICROPHONE_DRIVER_SW_VERSION 2.0f // FIR-filtered driver version
 
 /* Public Functions */
 micErrorCodes_t Microphone_Open(void* vpParam);

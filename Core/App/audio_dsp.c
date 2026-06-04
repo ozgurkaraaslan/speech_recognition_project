@@ -1,7 +1,7 @@
 #include "audio_dsp.h"
 #include "feature_extraction.h"
 
-// Sadece bu dosyaya özel (static) DSP bellek ve ayar değişkenleri
+// File-local (static) DSP memory and configuration
 static SpectrogramTypeDef        spectrogram_conf;
 static MelFilterTypeDef          mel_filter_conf;
 static MelSpectrogramTypeDef     mel_spectrogram_conf;

@@ -70,17 +70,17 @@ const osThreadAttr_t defaultTask_attributes = {
 };
 /* USER CODE BEGIN PV */
 
-// --- 1. SES VE YAPAY ZEKA TAMPONLARI ---
+// --- 1. AUDIO AND AI BUFFERS ---
 #define AUDIO_SAMPLE_RATE     16000
 #define AUDIO_DURATION_SEC    1
-#define AUDIO_BUFFER_SIZE     (AUDIO_SAMPLE_RATE * AUDIO_DURATION_SEC) // 1 saniyelik veri (16000)
+#define AUDIO_BUFFER_SIZE     (AUDIO_SAMPLE_RATE * AUDIO_DURATION_SEC) // 1 second of data (16000)
 
-// DMA üzerinden dolacak olan 16-bit PCM ham ses dizisi
+// 16-bit PCM raw audio buffer filled via DMA
 //int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
 
 __attribute__((section(".ccmram"))) int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
 
-// --- 4. HÜCRESEL AĞ, MQTT VE RTOS DEĞİŞKENLERİ ---
+// --- 4. CELLULAR NETWORK, MQTT AND RTOS VARIABLES ---
 extern UART_HandleTypeDef huart3; 
 UART_HandleTypeDef UartHandle;
 
@@ -94,7 +94,7 @@ osThreadId_t networkTaskHandle;
 
 const osThreadAttr_t networkTask_attributes = {
   .name = "networkTask",
-  .stack_size = 1024 * 4, // Sınırları aşmamak için büyük stack
+  .stack_size = 1024 * 4, // Large stack to avoid exceeding limits
   .priority = (osPriority_t) osPriorityNormal,
 };
 
@@ -102,7 +102,7 @@ osThreadId_t micTaskHandle;
 const osThreadAttr_t micTask_attributes = {
   .name = "MicTask",
   .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal, // Ses kaçırmamak için yüksek öncelik
+  .priority = (osPriority_t) osPriorityAboveNormal, // High priority to avoid audio dropouts
 };
 
 /* USER CODE END PV */
@@ -566,82 +566,80 @@ static void MX_GPIO_Init(void)
 
 void StartNetworkTask(void *argument)
 {
-	// AĞ KURULUM DÖNGÜSÜ
+  // NETWORK SETUP LOOP
 	for(;;)
 	{
-		// 1. Modeme ulaşılabiliyor mu?
+    // 1. Can we reach the modem?
 		if (Cellular_CheckDevice() == E_AT_ERR_NONE)
 		{
-			// 2. Hücresel şebekeye bağlı mıyız?
+      // 2. Are we attached to the cellular network?
 			if (Cellular_SetupNetwork() == E_AT_ERR_NONE)
 			{
-				// 3. HAYALET BAĞLANTI TEMİZLİĞİ
-				// İşlemci resetlenmiş ama modem açık kalmış olabilir. Temiz bir sayfa açıyoruz.
-				MQTT_CloseBroker();
-				osDelay(2000); // Modemin soketi düşürmesini bekle
+        // 3. CLEANUP STALE CONNECTION
+        // MCU may have reset while modem stayed connected — reset connection state.
+        MQTT_CloseBroker();
+        osDelay(2000); // Wait for modem socket to close
 
-				// 4. Broker'a Bağlan
+        // 4. Connect to Broker
 				if (MQTT_OpenBroker("broker.hivemq.com", 1883) == E_AT_ERR_NONE)
 				{
-					// 5. Client Girişi
-					if (MQTT_ConnectClient("Alpon_Test_Device_01", NULL, NULL) == E_AT_ERR_NONE)
+          // 5. Client connect
+          if (MQTT_ConnectClient("Alpon_Test_Device_01", NULL, NULL) == E_AT_ERR_NONE)
 					{
-						MQTT_Publish("speech_recognition/mqtt_status", "MQTT Baglantisi Basarili! Cihaz Online.");
+            MQTT_Publish("speech_recognition/mqtt_status", "MQTT Connection Successful! Device Online.");
 
 						osDelay(5000);
 
-						// 6. ANA YAYIN DÖNGÜSÜ (Bağlantı kopana kadar burada kalır)
+            // 6. MAIN PUBLISH LOOP (stays here until connection drops)
 						while(1)
 						{
-							// Mesajı gönder ve sonucunu dinle
-							atCommandErrorCodes_t pub_status = MQTT_Publish("speech_recognition/mqtt_status", "Cihaz calismaya devam ediyor...");
+              // Send message and check result
+              atCommandErrorCodes_t pub_status = MQTT_Publish("speech_recognition/mqtt_status", "Device is still running...");
 
-							// Eğer yayın başarısız olursa (Bağlantı koptu, modem kilitlendi vs.)
+              // If publish failed (connection lost, modem locked, etc.)
 							if (pub_status != E_AT_ERR_NONE)
 							{
-								// İÇ DÖNGÜYÜ KIR!
-								// Bu sayede kod aşağıdaki osDelay(5000)'e düşer ve dış döngü başa sarıp
-								// MQTT_CloseBroker() ile temizlik yaparak yeniden bağlanmayı dener.
+                // Break inner loop so the code falls through to the outer retry logic
+                // which will call MQTT_CloseBroker() and attempt reconnect.
 								break;
 							}
 
-							osDelay(10000); // Sorun yoksa 10 saniyede bir ping atmaya devam et
+              osDelay(10000); // If OK, continue pinging every 10 seconds
 						}
 					}
 				}
 			}
 		}
 
-		// Eğer buraya ulaştıysak: Modem cevap vermiyor, internet koptu veya Broker düştü demektir.
-		// Hata durumunda 2 saniye bekle ve BAŞTAN (Temizlik yaparak) tekrar bağlanmayı dene!
+    // If we reach here: modem not responding, internet down, or broker dropped.
+    // On error wait 2 seconds and retry from the start (cleanup first).
 		osDelay(2000);
 	}
 
 }
 
 
-// --- 4. ANA MİKROFON GÖREVİ ---
+// --- 4. MAIN MICROPHONE TASK ---
 void StartMicTask(void *argument)
 {
-    // 1. Sistemleri Başlat
-    My_AI_Init();
-    AudioDSP_Init();
+  // 1. Initialize systems
+  My_AI_Init();
+  AudioDSP_Init();
 
-    // 2. Yeni Mikrofon Sürücümüzü Başlatıyoruz
-    Microphone_Open(NULL);
+  // 2. Start new microphone driver
+  Microphone_Open(NULL);
 
-    for(;;)
+  for(;;)
+  {
+    // STEP 1: Record audio
+    // This call blocks until the buffer is filled (16000 samples).
+    if (Microphone_Read(pcm_audio_buffer, AUDIO_BUFFER_SIZE) == E_MIC_ERR_NONE)
     {
-        // ADIM 1: Sesi Kaydet
-        // O sildiğimiz devasa 'while' döngüsünün tüm işini artık bu tek satır yapıyor!
-        // Fonksiyon 16000 veri dolana kadar kendi içinde bekler, dolduğunda buraya düşer.
-        if (Microphone_Read(pcm_audio_buffer, AUDIO_BUFFER_SIZE) == E_MIC_ERR_NONE)
-        {
-            // ADIM 2: Yapay Zekaya Ver
-            Process_Audio_To_MelSpectrogram(pcm_audio_buffer, stai_input_buffer);
-            My_AI_Run(stai_input_buffer, stai_output_buffer);
+      // STEP 2: Send to AI
+      Process_Audio_To_MelSpectrogram(pcm_audio_buffer, stai_input_buffer);
+      My_AI_Run(stai_input_buffer, stai_output_buffer);
 
-            // ADIM 3: Karar Ver ve MQTT ile yolla
+      // STEP 3: Decide and publish via MQTT
             float prob_yes   = stai_output_buffer[2];
             float prob_no    = stai_output_buffer[0];
 
@@ -663,7 +661,7 @@ void StartMicTask(void *argument)
             }
         }
 
-        // RTOS'un nefes alması için minik bir bekleme
+        // Small delay to yield to RTOS
         osDelay(10);
     }
 }
@@ -687,7 +685,7 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    // Default task işini bitirdi, sistemi yormaması için derin uykuya alıyoruz
+    // Default task finished work; enter idle delay to reduce CPU load
     osDelay(2000);
   }
   /* USER CODE END 5 */
