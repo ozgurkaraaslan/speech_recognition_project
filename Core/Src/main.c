@@ -28,11 +28,11 @@
 #include <stdlib.h>
 #include "at_command.h"
 #include "cellular.h"
+#include "microphone.h"
 #include "mqtt.h"
 #include "app_x-cube-ai.h"
 #include "feature_extraction.h"
 #include "network.h"
-#include "MP45DT02-MEMS-Microphone.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -211,7 +211,6 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   AtCommand_Open(NULL);
-  microphone_init();
 
   /* USER CODE END 2 */
 
@@ -769,39 +768,27 @@ void StartNetworkTask(void *argument)
 // --- 4. ANA MİKROFON GÖREVİ ---
 void StartMicTask(void *argument)
 {
+    // 1. Sistemleri Başlat
     My_AI_Init();
     AudioDSP_Init();
 
-    // Adamın mikrofon başlatma fonksiyonları
-    microphone_init();
-    microphone_start();
+    // 2. Yeni Mikrofon Sürücümüzü Başlatıyoruz
+    Microphone_Open(NULL);
 
     for(;;)
     {
-        // ADIM 1: Sesi Kaydet (Adamın yöntemiyle parçalar halinde doldur)
-        uint32_t num_segments = AUDIO_BUFFER_SIZE / 16; // 1000 parça (16000 / 16)
-        uint32_t segment_index = 0;
+        // ADIM 1: Sesi Kaydet
+        // O sildiğimiz devasa 'while' döngüsünün tüm işini artık bu tek satır yapıyor!
+        // Fonksiyon 16000 veri dolana kadar kendi içinde bekler, dolduğunda buraya düşer.
+        if (Microphone_Read(pcm_audio_buffer, AUDIO_BUFFER_SIZE) == E_MIC_ERR_NONE)
+        {
+            // ADIM 2: Yapay Zekaya Ver
+            Process_Audio_To_MelSpectrogram(pcm_audio_buffer, stai_input_buffer);
+            My_AI_Run(stai_input_buffer, stai_output_buffer);
 
-        while (segment_index < num_segments) {
-            // 1ms bekleme yerine, kesmenin dürtmesini bekle (Anında uyanır)
-            if (osSemaphoreAcquire(rx_semaphore, 10) == osOK) {
-                if(microphone_record_sample()) {
-                    memcpy(&pcm_audio_buffer[segment_index * 16], pcm_buffer_int16, sizeof(int16_t) * 16);
-                    segment_index++;
-                }
-            } else {
-                // Mikrofon veya DMA çöktü, yeniden başlatma stratejisi eklenebilir.
-            }
-        }
-
-        // ADIM 2: Yapay Zekaya Ver (Burada önceki mesajdaki DSP DB düzeltmelerini yapmayı unutma!)
-        Process_Audio_To_MelSpectrogram(pcm_audio_buffer, stai_input_buffer);
-        My_AI_Run(stai_input_buffer, stai_output_buffer);
-
-
-			// ADIM 5: Karar Ver ve MQTT ile yolla
-			float prob_yes   = stai_output_buffer[2];
-			float prob_no    = stai_output_buffer[0];
+            // ADIM 3: Karar Ver ve MQTT ile yolla
+            float prob_yes   = stai_output_buffer[2];
+            float prob_no    = stai_output_buffer[0];
 
             if (prob_yes > 0.75f) {
                 HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);
@@ -820,8 +807,10 @@ void StartMicTask(void *argument)
                 HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_RESET);
             }
         }
-        osDelay(10);
 
+        // RTOS'un nefes alması için minik bir bekleme
+        osDelay(10);
+    }
 }
 
 /* USER CODE END 4 */
