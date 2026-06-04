@@ -19,7 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
-//#include "pdm2pcm.h"
 #include "usb_host.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -30,9 +29,8 @@
 #include "cellular.h"
 #include "microphone.h"
 #include "mqtt.h"
-#include "app_x-cube-ai.h"
-#include "feature_extraction.h"
-#include "network.h"
+#include "audio_dsp.h"
+#include "ai_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -82,32 +80,6 @@ const osThreadAttr_t defaultTask_attributes = {
 
 __attribute__((section(".ccmram"))) int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
 
-// --- 2. YENİ (STAI UYUMLU): X-CUBE-AI ÇEKİRDEK DEĞİŞKENLERİ ---
-// network.h içindeki 4880 boyutunu (122x40) doğrudan kullanıyoruz.
-__attribute__((aligned(4))) float stai_input_buffer[STAI_NETWORK_IN_1_SIZE];
-__attribute__((aligned(4))) float stai_output_buffer[STAI_NETWORK_OUT_1_SIZE];
-
-__attribute__((aligned(4))) uint8_t activations[STAI_NETWORK_ACTIVATIONS_SIZE_BYTES];
-__attribute__((aligned(8))) uint8_t stai_context_buffer[STAI_NETWORK_CONTEXT_SIZE];
-stai_network* my_network;
-
-// --- 3. DSP VE SES İŞLEME KÜTÜPHANESİ DEĞİŞKENLERİ ---
-// Kütüphanenin çalışması için gereken temel yapılar
-SpectrogramTypeDef        spectrogram_conf;
-MelFilterTypeDef          mel_filter_conf;
-MelSpectrogramTypeDef     mel_spectrogram_conf;
-LogMelSpectrogramTypeDef  log_mel_conf;
-
-// FFT İşlemleri için CMSIS-DSP Bellekleri (512 FFT boyutu)
-arm_rfft_fast_instance_f32 rfft_fast_inst;
-float32_t scratch_fft[512];
-float32_t window_buffer[512]; // Pencere (Window) için dizi
-
-// Mel Filtre Bankası Katsayıları (2020'den 600'e düşürülerek RAM kurtarıldı)
-uint32_t  mel_start_idx[40];
-uint32_t  mel_stop_idx[40];
-float32_t mel_coeffs[600];
-
 // --- 4. HÜCRESEL AĞ, MQTT VE RTOS DEĞİŞKENLERİ ---
 extern UART_HandleTypeDef huart3; 
 UART_HandleTypeDef UartHandle;
@@ -152,18 +124,7 @@ void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 void StartMicTask(void *argument);
-void StartNetworkTask(void *argument); // YENİ EKLENDİ
-//void StartSignalTask(void *argument);
-//void StartTimeTask(void *argument);
-
-// DSP Fonksiyonlarımız
-void AudioDSP_Init(void);
-void Process_Audio_To_MelSpectrogram(int16_t* pcm_input, float* log_mel_output);
-
-// YENİ: Kendi Yapay Zeka (AI) Wrapper Fonksiyonlarımız
-void My_AI_Init(void);
-void My_AI_Run(float *in_data, float *out_data);
-
+void StartNetworkTask(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -607,107 +568,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-// --- 1. YAPAY ZEKA BAŞLATMA (INIT) FONKSİYONU (STAI API) ---
-void My_AI_Init(void)
-{
-    stai_return_code ret;
-    my_network = (stai_network*)stai_context_buffer;
-    ret = stai_network_init(my_network);
-    if (ret != STAI_SUCCESS) {
-        while(1) { osDelay(10); }
-    }
-    stai_ptr act_ptr[1];
-    act_ptr[0] = (stai_ptr)activations;
-    stai_network_set_activations(my_network, act_ptr, 1);
-}
-
-// --- 2. YAPAY ZEKA ÇALIŞTIRMA FONKSİYONU (DÜZELTİLDİ) ---
-void My_AI_Run(float *in_data, float *out_data)
-{
-    stai_ptr input_ptrs[1];
-    stai_ptr output_ptrs[1];
-
-    input_ptrs[0] = (stai_ptr)in_data;
-    output_ptrs[0] = (stai_ptr)out_data;
-
-    stai_network_set_inputs(my_network, input_ptrs, 1);
-    stai_network_set_outputs(my_network, output_ptrs, 1);
-
-    // BİNGO: MODE_SYNC yerine STAI_MODE_SYNC yazılarak hata çözüldü
-    stai_network_run(my_network, STAI_MODE_SYNC);
-}
-
-void AudioDSP_Init(void)
-{
-    // --- 1. PENCERELEME (WINDOW) VE SPEKTROGRAM AYARLARI ---
-    Window_Init(window_buffer, 512, WINDOW_HANN); // 512'lik Hanning Penceresi
-
-    spectrogram_conf.pRfft    = &rfft_fast_inst;
-    spectrogram_conf.Type     = SPECTRUM_TYPE_POWER; // cnn_vis.py'deki tf.abs(spectrogram) ** 2
-    spectrogram_conf.pWindow  = window_buffer;
-    spectrogram_conf.SampRate = 16000;
-    spectrogram_conf.FrameLen = 512;
-    spectrogram_conf.FFTLen   = 512;
-    spectrogram_conf.pScratch = scratch_fft;
-
-    // ARM DSP FFT Motorunu Başlat
-    arm_rfft_fast_init_f32(&rfft_fast_inst, spectrogram_conf.FFTLen);
-
-    // --- 2. MEL FİLTRE BANKASI AYARLARI ---
-    mel_filter_conf.pStartIndices      = mel_start_idx;
-    mel_filter_conf.pStopIndices       = mel_stop_idx;
-    mel_filter_conf.pCoefficients      = mel_coeffs;
-    mel_filter_conf.NumMels            = 40;       // 40 Mel Bandı
-    mel_filter_conf.FFTLen             = 512;
-    mel_filter_conf.SampRate           = 16000;
-    mel_filter_conf.FMin               = 300.0f;   // 300 Hz Alt Sınır
-    mel_filter_conf.FMax               = 8000.0f;  // 8000 Hz Üst Sınır
-    mel_filter_conf.Formula            = MEL_SLANEY; // veya MEL_HTK
-    mel_filter_conf.Normalize          = 1;
-    mel_filter_conf.Mel2F              = 1;        // TensorFlow uyumlu mel matrisi
-
-    // Mel Matrisini Hesapla
-    MelFilterbank_Init(&mel_filter_conf);
-
-    // --- 3. ANA YAPIYI BAĞLAMA ---
-    mel_spectrogram_conf.SpectrogramConf = &spectrogram_conf;
-    mel_spectrogram_conf.MelFilter       = &mel_filter_conf;
-
-    log_mel_conf.MelSpectrogramConf = &mel_spectrogram_conf;
-    log_mel_conf.LogFormula         = LOGMELSPECTROGRAM_SCALE_DB; // TensorFlow uyumlu (Ln)
-    log_mel_conf.Ref                = 1.0f;
-    log_mel_conf.TopdB              = 80.0f;
-}
-
-// (Daha önce tanımladığımız değişkenler)
-// #define AUDIO_BUFFER_SIZE 16000
-// int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
-// float temp_mel_spectrogram[122 * 40];
-
-void Process_Audio_To_MelSpectrogram(int16_t* pcm_input, float* log_mel_output)
-{
-    float32_t float_frame[512];
-    float32_t mel_col[40];
-
-    int hop_length = 128;
-    int frame_length = 512;
-    int total_columns = ((16000 - frame_length) / hop_length) + 1;
-
-    for (int col = 0; col < total_columns; col++)
-    {
-        // 1. PCM'i float'a çevir (Kütüphane kendi içinde -1.0 ile 1.0 arasına oranlar)
-        buf_to_float_normed(&pcm_input[col * hop_length], float_frame, frame_length);
-
-        // 2. Kütüphaneyle Log-Mel (DB formatında) Özelliklerini çıkar
-        LogMelSpectrogramColumn(&log_mel_conf, float_frame, mel_col);
-
-        // 3. NORMALİZASYON İPTAL! Referans repodaki gibi hiçbir formül uygulamadan doğrudan yaz!
-        for (int m = 0; m < 40; m++) {
-            log_mel_output[(col * 40) + m] = mel_col[m];
-        }
-    }
-}
 
 void StartNetworkTask(void *argument)
 {
