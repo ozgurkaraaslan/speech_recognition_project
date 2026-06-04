@@ -19,16 +19,18 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
-#include "pdm2pcm.h"
 #include "usb_host.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdlib.h>
-#include "microphone.h"
 #include "at_command.h"
 #include "cellular.h"
+#include "microphone.h"
+#include "mqtt.h"
+#include "audio_dsp.h"
+#include "ai_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,7 +54,6 @@ CRC_HandleTypeDef hcrc;
 I2C_HandleTypeDef hi2c1;
 
 I2S_HandleTypeDef hi2s2;
-I2S_HandleTypeDef hi2s3;
 DMA_HandleTypeDef hdma_spi2_rx;
 
 SPI_HandleTypeDef hspi1;
@@ -64,12 +65,24 @@ UART_HandleTypeDef huart3;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
-char latest_signal_strength[64] = "Unknown";
-char latest_network_time[64] = "Unknown";
+
+// --- 1. AUDIO AND AI BUFFERS ---
+#define AUDIO_SAMPLE_RATE     16000
+#define AUDIO_DURATION_SEC    1
+#define AUDIO_BUFFER_SIZE     (AUDIO_SAMPLE_RATE * AUDIO_DURATION_SEC) // 1 second of data (16000)
+
+// 16-bit PCM raw audio buffer filled via DMA
+//int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
+
+__attribute__((section(".ccmram"))) int16_t pcm_audio_buffer[AUDIO_BUFFER_SIZE];
+
+// --- 4. CELLULAR NETWORK, MQTT AND RTOS VARIABLES ---
+extern UART_HandleTypeDef huart3; 
+UART_HandleTypeDef UartHandle;
 
 osMutexId_t at_driver_mutexHandle;
 const osMutexAttr_t at_driver_mutex_attributes = {
@@ -77,49 +90,38 @@ const osMutexAttr_t at_driver_mutex_attributes = {
 };
 
 // Handle definitions for other tasks
-osThreadId_t signalTaskHandle;
-osThreadId_t timeTaskHandle;
+osThreadId_t networkTaskHandle;
 
-const osThreadAttr_t signalTask_attributes = {
-  .name = "SignalTask",
-  .stack_size = 256 * 4,
+const osThreadAttr_t networkTask_attributes = {
+  .name = "networkTask",
+  .stack_size = 1024 * 4, // Large stack to avoid exceeding limits
   .priority = (osPriority_t) osPriorityNormal,
-};
-
-const osThreadAttr_t timeTask_attributes = {
-  .name = "TimeTask",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 
 osThreadId_t micTaskHandle;
 const osThreadAttr_t micTask_attributes = {
   .name = "MicTask",
-  .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal, // Ses kaçırmamak için yüksek öncelik
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal, // High priority to avoid audio dropouts
 };
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-void PeriphCommonClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_I2C1_Init(void);
-static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
-static void MX_USART3_UART_Init(void);
-static void MX_I2S2_Init(void);
-static void MX_CRC_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_USART3_UART_Init(void);
+static void MX_CRC_Init(void);
+static void MX_I2S2_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-
-void StartSignalTask(void *argument);
-void StartTimeTask(void *argument);
 void StartMicTask(void *argument);
-
+void StartNetworkTask(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -150,9 +152,6 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
-  /* Configure the peripherals common clocks */
-  PeriphCommonClock_Config();
-
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
@@ -161,17 +160,14 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_I2C1_Init();
-  MX_I2S3_Init();
   MX_SPI1_Init();
-  MX_USART3_UART_Init();
-  MX_I2S2_Init();
-  MX_CRC_Init();
-  MX_PDM2PCM_Init();
   MX_USART2_UART_Init();
+  MX_USART3_UART_Init();
+  MX_CRC_Init();
+  MX_I2S2_Init();
   /* USER CODE BEGIN 2 */
 
   AtCommand_Open(NULL);
-  Microphone_Open(NULL);
 
   /* USER CODE END 2 */
 
@@ -179,13 +175,11 @@ int main(void)
   osKernelInitialize();
 
   /* USER CODE BEGIN RTOS_MUTEX */
-
   at_driver_mutexHandle = osMutexNew(&at_driver_mutex_attributes);
 
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
-  /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -201,11 +195,7 @@ int main(void)
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-
-  // Create threads for signal quality and time retrieval
-  signalTaskHandle = osThreadNew(StartSignalTask, NULL, &signalTask_attributes);
-  timeTaskHandle = osThreadNew(StartTimeTask, NULL, &timeTask_attributes);
-
+  networkTaskHandle = osThreadNew(StartNetworkTask, NULL, &networkTask_attributes);
   // Create thread for microphone data processing
   micTaskHandle = osThreadNew(StartMicTask, NULL, &micTask_attributes);
   /* USER CODE END RTOS_THREADS */
@@ -251,9 +241,9 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 336;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLM = 4;
+  RCC_OscInitStruct.PLL.PLLN = 168;
+  RCC_OscInitStruct.PLL.PLLP = 2;
   RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -270,25 +260,6 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
-
-/**
-  * @brief Peripherals Common Clock Configuration
-  * @retval None
-  */
-void PeriphCommonClock_Config(void)
-{
-  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-
-  /** Initializes the peripherals clock
-  */
-  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_I2S;
-  PeriphClkInitStruct.PLLI2S.PLLI2SN = 192;
-  PeriphClkInitStruct.PLLI2S.PLLI2SR = 2;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     Error_Handler();
   }
@@ -372,7 +343,7 @@ static void MX_I2S2_Init(void)
   /* USER CODE END I2S2_Init 1 */
   hi2s2.Instance = SPI2;
   hi2s2.Init.Mode = I2S_MODE_MASTER_RX;
-  hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
+  hi2s2.Init.Standard = I2S_STANDARD_MSB;
   hi2s2.Init.DataFormat = I2S_DATAFORMAT_16B;
   hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
   hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_32K;
@@ -386,40 +357,6 @@ static void MX_I2S2_Init(void)
   /* USER CODE BEGIN I2S2_Init 2 */
 
   /* USER CODE END I2S2_Init 2 */
-
-}
-
-/**
-  * @brief I2S3 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_I2S3_Init(void)
-{
-
-  /* USER CODE BEGIN I2S3_Init 0 */
-
-  /* USER CODE END I2S3_Init 0 */
-
-  /* USER CODE BEGIN I2S3_Init 1 */
-
-  /* USER CODE END I2S3_Init 1 */
-  hi2s3.Instance = SPI3;
-  hi2s3.Init.Mode = I2S_MODE_MASTER_TX;
-  hi2s3.Init.Standard = I2S_STANDARD_PHILIPS;
-  hi2s3.Init.DataFormat = I2S_DATAFORMAT_16B;
-  hi2s3.Init.MCLKOutput = I2S_MCLKOUTPUT_ENABLE;
-  hi2s3.Init.AudioFreq = I2S_AUDIOFREQ_96K;
-  hi2s3.Init.CPOL = I2S_CPOL_LOW;
-  hi2s3.Init.ClockSource = I2S_CLOCK_PLL;
-  hi2s3.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
-  if (HAL_I2S_Init(&hi2s3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN I2S3_Init 2 */
-
-  /* USER CODE END I2S3_Init 2 */
 
 }
 
@@ -589,7 +526,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
@@ -626,94 +563,106 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void StartNetworkTask(void *argument)
+{
+  // NETWORK SETUP LOOP
+	for(;;)
+	{
+    // 1. Can we reach the modem?
+		if (Cellular_CheckDevice() == E_AT_ERR_NONE)
+		{
+      // 2. Are we attached to the cellular network?
+			if (Cellular_SetupNetwork() == E_AT_ERR_NONE)
+			{
+        // 3. CLEANUP STALE CONNECTION
+        // MCU may have reset while modem stayed connected — reset connection state.
+        MQTT_CloseBroker();
+        osDelay(2000); // Wait for modem socket to close
+
+        // 4. Connect to Broker
+				if (MQTT_OpenBroker("broker.hivemq.com", 1883) == E_AT_ERR_NONE)
+				{
+          // 5. Client connect
+          if (MQTT_ConnectClient("Alpon_Test_Device_01", NULL, NULL) == E_AT_ERR_NONE)
+					{
+            MQTT_Publish("speech_recognition/mqtt_status", "MQTT Connection Successful! Device Online.");
+
+						osDelay(5000);
+
+            // 6. MAIN PUBLISH LOOP (stays here until connection drops)
+						while(1)
+						{
+              // Send message and check result
+              atCommandErrorCodes_t pub_status = MQTT_Publish("speech_recognition/mqtt_status", "Device is still running...");
+
+              // If publish failed (connection lost, modem locked, etc.)
+							if (pub_status != E_AT_ERR_NONE)
+							{
+                // Break inner loop so the code falls through to the outer retry logic
+                // which will call MQTT_CloseBroker() and attempt reconnect.
+								break;
+							}
+
+              osDelay(10000); // If OK, continue pinging every 10 seconds
+						}
+					}
+				}
+			}
+		}
+
+    // If we reach here: modem not responding, internet down, or broker dropped.
+    // On error wait 2 seconds and retry from the start (cleanup first).
+		osDelay(2000);
+	}
+
+}
+
+
+// --- 4. MAIN MICROPHONE TASK ---
 void StartMicTask(void *argument)
 {
-    int16_t pcm_data[16];
+  // 1. Initialize systems
+  My_AI_Init();
+  AudioDSP_Init();
 
-    for(;;)
+  // 2. Start new microphone driver
+  Microphone_Open(NULL);
+
+  for(;;)
+  {
+    // STEP 1: Record audio
+    // This call blocks until the buffer is filled (16000 samples).
+    if (Microphone_Read(pcm_audio_buffer, AUDIO_BUFFER_SIZE) == E_MIC_ERR_NONE)
     {
-        if (Microphone_Read(pcm_data, 16) == E_MIC_ERR_NONE)
-        {
-            uint32_t total_amplitude = 0;
+      // STEP 2: Send to AI
+      Process_Audio_To_MelSpectrogram(pcm_audio_buffer, stai_input_buffer);
+      My_AI_Run(stai_input_buffer, stai_output_buffer);
 
-            // Calculate average amplitude of the 16 PCM samples to estimate noise level
-            for (int i = 0; i < 16; i++) {
-                // Voice data is centered around 0, so we take absolute value to get amplitude
-                total_amplitude += abs(pcm_data[i]);
+      // STEP 3: Decide and publish via MQTT
+            float prob_yes   = stai_output_buffer[2];
+            float prob_no    = stai_output_buffer[0];
+
+            if (prob_yes > 0.75f) {
+                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);
+                HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_RESET);
+                MQTT_Publish("speech_recognition/result", "1");
+                osDelay(50);
             }
-
-            uint32_t avg_amplitude = total_amplitude / 16;
-
-            // Threshold check
-            if (avg_amplitude > 1800) {
-                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET);   // Green LED HIGH
-            } else {
-                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET); // Green LED LOW
+            else if (prob_no > 0.75f) {
+                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_SET);
+                MQTT_Publish("speech_recognition/result", "0");
+                osDelay(50);
             }
-        } else {
-			// If the semaphore times out (microphone freezes), to prevent locking up the processor:
-			osDelay(1);
-		}
-    }
-}
-
-// Task 1: Measure Signal Quality (CSQ)
-void StartSignalTask(void *argument)
-{
-    char resp_buf[64];
-    AtCommandReq_t req = {
-        .command = "AT+CSQ",
-        .expected_resp = "OK",
-        .timeout_ms = 1000,
-        .resp_buffer = resp_buf,
-        .resp_buffer_len = sizeof(resp_buf)
-    };
-
-    for(;;)
-    {
-        // Take the mutex before accessing the driver
-        if (osMutexAcquire(at_driver_mutexHandle, osWaitForever) == osOK)
-        {
-            if(AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req) == E_AT_ERR_NONE) {
-                if(req.line_count > 0) {
-                	snprintf(latest_signal_strength, sizeof(latest_signal_strength), "%s", req.lines[0]);
-                }
+            else {
+                HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_RESET);
             }
-            // Release the mutex after done
-            osMutexRelease(at_driver_mutexHandle);
         }
 
-        osDelay(5000);
-    }
-}
-
-// Task 2: Get Current Time from Modem (CCLK)
-void StartTimeTask(void *argument)
-{
-    char resp_buf[64];
-    AtCommandReq_t req = {
-        .command = "AT+CCLK?",
-        .expected_resp = "OK",
-        .timeout_ms = 1000,
-        .resp_buffer = resp_buf,
-        .resp_buffer_len = sizeof(resp_buf)
-    };
-
-    for(;;)
-    {
-        // Take the mutex before accessing the driver
-        if (osMutexAcquire(at_driver_mutexHandle, osWaitForever) == osOK)
-        {
-            if(AtCommand_Ioctl(E_AT_IOCTL_SEND_CMD, &req) == E_AT_ERR_NONE) {
-                 if(req.line_count > 0) {
-                	 snprintf(latest_network_time, sizeof(latest_network_time), "%s", req.lines[0]);
-                }
-            }
-            // Release the mutex after done
-            osMutexRelease(at_driver_mutexHandle);
-        }
-
-        osDelay(3000);
+        // Small delay to yield to RTOS
+        osDelay(10);
     }
 }
 
@@ -730,24 +679,15 @@ void StartDefaultTask(void *argument)
 {
   /* init code for USB_HOST */
   MX_USB_HOST_Init();
+
   /* USER CODE BEGIN 5 */
 
-  // 1. Open the UART driver
-  AtCommand_Open(NULL);
-
-  // 2. Try to initialize the EG25-G
-  atCommandErrorCodes_t res = Cellular_InitDevice();
-
-  if (res == E_AT_ERR_NONE) {
-	  // Try to setup the network
-	  res = Cellular_SetupNetwork();
-  }
-
+  /* Infinite loop */
   for(;;)
   {
-	  osDelay(1000);
+    // Default task finished work; enter idle delay to reduce CPU load
+    osDelay(2000);
   }
-
   /* USER CODE END 5 */
 }
 

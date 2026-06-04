@@ -1,0 +1,42 @@
+{
+  "args": {
+    "model": "C:\\Users\\ayseb\\Downloads\\model_no_quant.tflite",
+    "valinput": "",
+    "valoutput": "",
+    "batch-size": 10,
+    "mode": "host",
+    "optimization": "balanced",
+    "name": "network",
+    "verbosity": 1,
+    "c-api": "st-ai"
+  },
+  "mempools": [
+    {
+      "name": "RAM",
+      "size": 114688,
+      "offset": 536870912,
+      "driver": "RAM",
+      "max": 114688,
+      "mode_available": []
+    },
+    {
+      "name": "RAM2",
+      "size": 16384,
+      "offset": 536985600,
+      "driver": "RAM2",
+      "max": 16384,
+      "mode_available": []
+    },
+    {
+      "name": "CCMRAM",
+      "size": 65536,
+      "offset": 268435456,
+      "driver": "CCMRAM",
+      "max": 65536,
+      "mode_available": []
+    }
+  ],
+  "exportWeightsAsBin": false,
+  "copyWeightsToRam": false,
+  "automaticFlash": true
+}

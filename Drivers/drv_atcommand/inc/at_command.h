@@ -20,7 +20,8 @@ typedef enum {
 
 typedef enum {
     E_AT_IOCTL_NONE = 0,
-    E_AT_IOCTL_SEND_CMD
+    E_AT_IOCTL_SEND_CMD,
+	E_AT_IOCTL_SEND_RAW
 } AT_COMMAND_IOCTL_COMMANDS_T;
 
 #define AT_MAX_LINES    8
@@ -38,6 +39,13 @@ typedef struct {
     char* lines[AT_MAX_LINES];   // Parsed lines from the response (e.g., if response is "OK\r\n+CSQ: 15,99\r\n", lines[0] = "+CSQ: 15,99")
     uint8_t line_count;          // Number of valid lines parsed into the 'lines' array
 } AtCommandReq_t;
+
+typedef struct {
+    uint8_t* data;       // Pointer to raw data payload to send
+    uint16_t length;     // Length of the data in bytes
+    uint32_t timeout_ms; // Timeout for UART transmission (ms)
+} AtCommandRawReq_t;
+
 
 // API Function Prototypes
 atCommandErrorCodes_t AtCommand_Open(void* vpParam);

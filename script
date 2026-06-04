@@ -1,0 +1,8 @@
+config load "C:\Users\ayseb\Documents\embedded_stm32\main_project\speech_recognition_project\driver_development.ioc"
+project toolchain STM32CubeIDE
+
+project toolchain "STM32CubeIDE"
+set mode RCC HSE-External-Oscillator
+config save
+project set heapsize 0x800
+project set stacksize 0x2000

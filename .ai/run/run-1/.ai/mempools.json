@@ -1,0 +1,63 @@
+{
+  "memory": {
+    "mempools": [
+      {
+        "name": "RAM",
+        "prop": {
+          "throughput": "HIGH",
+          "latency": "LOW"
+        },
+        "usable_size": {
+          "value": "114688",
+          "magnitude": "BYTES"
+        },
+        "size": {
+          "value": "114688",
+          "magnitude": "BYTES"
+        },
+        "offset": {
+          "value": "0x20000000",
+          "magnitude": "BYTES"
+        }
+      },
+      {
+        "name": "RAM2",
+        "prop": {
+          "throughput": "HIGH",
+          "latency": "MID"
+        },
+        "usable_size": {
+          "value": "16384",
+          "magnitude": "BYTES"
+        },
+        "size": {
+          "value": "16384",
+          "magnitude": "BYTES"
+        },
+        "offset": {
+          "value": "0x2001c000",
+          "magnitude": "BYTES"
+        }
+      },
+      {
+        "name": "CCMRAM",
+        "prop": {
+          "throughput": "MID",
+          "latency": "LOW"
+        },
+        "usable_size": {
+          "value": "65536",
+          "magnitude": "BYTES"
+        },
+        "size": {
+          "value": "65536",
+          "magnitude": "BYTES"
+        },
+        "offset": {
+          "value": "0x10000000",
+          "magnitude": "BYTES"
+        }
+      }
+    ]
+  }
+}
