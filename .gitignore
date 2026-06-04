@@ -1,2 +1,14 @@
-/Debug/
-/Release/
+Debug/
+Release/
+build/
+
+*.o
+*.d
+*.su
+
+run_tests
+run_tests.dSYM/
+tests/*.o
+
+.DS_Store
+*.launch
