@@ -123,7 +123,7 @@ micErrorCodes_t Microphone_Read(int16_t* pBuffer, uint16_t size)
             }
         }
         else {
-            return E_MIC_ERR_UNKNOWN; // 10ms timeout (hardware stuck)
+            return E_MIC_ERR_UNKNOWN;
         }
     }
     return E_MIC_ERR_NONE;
@@ -143,7 +143,7 @@ micErrorCodes_t Microphone_Ioctl(MIC_IOCTL_COMMANDS_T eCommand, void* vpParam)
     return E_MIC_ERR_NONE;
 }
 
-// --- DMA KESME FONKSİYONLARI ---
+// --- DMA Interrupt Functions ---
 void HAL_I2S_RxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 {
     if (hi2s->Instance == hi2s2.Instance) {
